@@ -1,6 +1,10 @@
-# 🍅 Tomato Timer
+<img src="workstation.svg" width="96" align="right" alt="">
 
-Timer Pomodoro nativo para desktop Linux (GTK 4 + Python), inspirado no tomato-timer.com, com tarefas, notas e um contador na barra superior do GNOME.
+# All-in-One Workstation
+
+App de foco para desktop Linux (GTK 4 + Python) que junta, num lugar só, timer Pomodoro, lista de tarefas e notas, com o contador sempre visível na barra superior do GNOME.
+
+Começou como um clone do tomato-timer.com e foi crescendo.
 
 ## Funcionalidades
 
@@ -10,8 +14,8 @@ Timer Pomodoro nativo para desktop Linux (GTK 4 + Python), inspirado no tomato-t
 - **Alarme**: 6 sons sintetizados na hora (sem arquivos de áudio) e volume ajustável (Mute, 10%–100%)
 - **Notificações** de desktop quando o tempo acaba e auto start opcional do próximo ciclo
 - **Tasks**: lista de tarefas com projetos, prioridades e datas. Um clique inicia um pomodoro focado na tarefa
-- **Notes**: notas em Markdown salvas em `~/Documentos/Tomato Notes`
-- **Barra superior**: extensão do GNOME Shell que mostra `🍅 MM:SS` com a cor do modo atual. Clicar nela abre o app
+- **Notes**: notas em Markdown salvas em `~/Documentos/Workstation Notes`
+- **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
 ## Atalhos
 
@@ -35,7 +39,7 @@ Timer Pomodoro nativo para desktop Linux (GTK 4 + Python), inspirado no tomato-t
 ./install.sh
 ```
 
-Instala em `~/.local` (app, ícone, entrada no menu e a extensão da barra). No Wayland, faça logout/login para a extensão aparecer na primeira vez.
+Instala em `~/.local` (app, ícone, entrada no menu, comando `all-in-one-workstation` e a extensão da barra). Se você tinha a versão antiga (Tomato Timer), o install migra suas configurações, tarefas e notas e remove a instalação antiga. No Wayland, faça logout/login para a extensão aparecer na primeira vez.
 
 Para remover: `./uninstall.sh`
 
@@ -43,17 +47,17 @@ Para remover: `./uninstall.sh`
 
 | O quê                  | Onde                                            |
 |------------------------|-------------------------------------------------|
-| Preferências e log     | `~/.config/tomato-timer/state.json`             |
-| Tarefas                | `~/.config/tomato-timer/tasks.json`             |
-| Notas                  | `~/Documentos/Tomato Notes/*.md`                |
-| Estado para a barra    | `$XDG_RUNTIME_DIR/tomato-timer/panel.json`      |
+| Preferências e log     | `~/.config/all-in-one-workstation/state.json`   |
+| Tarefas                | `~/.config/all-in-one-workstation/tasks.json`   |
+| Notas                  | `~/Documentos/Workstation Notes/*.md`           |
+| Estado para a barra    | `$XDG_RUNTIME_DIR/all-in-one-workstation/panel.json` |
 
 ## Estrutura
 
 ```
-tomato_timer.py          janela principal, timer, sons e opções
-tomato_tasks.py          aba Tasks
-tomato_notes.py          aba Notes
+workstation.py           janela principal, timer, sons e opções
+workstation_tasks.py     aba Tasks
+workstation_notes.py     aba Notes
 panel-extension/         extensão do GNOME Shell (barra superior)
 install.sh/uninstall.sh  instalação local em ~/.local
 ```

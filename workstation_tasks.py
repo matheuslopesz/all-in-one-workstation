@@ -11,7 +11,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
-TASKS_FILE = os.path.join(GLib.get_user_config_dir(), "tomato-timer", "tasks.json")
+TASKS_FILE = os.path.join(GLib.get_user_config_dir(), "all-in-one-workstation", "tasks.json")
 INBOX = "inbox"
 PRIORITY_COLORS = {1: "#d1453b", 2: "#eb8909", 3: "#246fe0", 4: "#808080"}
 PROJECT_COLORS = ["#db4035", "#ff9933", "#fad000", "#7ecc49", "#299438",

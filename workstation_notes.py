@@ -9,7 +9,7 @@ gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
 NOTES_DIR = os.path.join(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) or GLib.get_home_dir(),
-                         "Tomato Notes")
+                         "Workstation Notes")
 ACCENT = "#7f6df2"
 LINK_RE = re.compile(r"\[\[([^\]|#\n]+)([#|][^\]\n]*)?\]\]")
 URL_LINK_RE = re.compile(r"\[[^\]\n]+\]\(([^)\n]+)\)")

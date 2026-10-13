@@ -18,15 +18,15 @@ gi.require_version("Gsk", "4.0")
 gi.require_version("Graphene", "1.0")
 from gi.repository import Gdk, GLib, Graphene, Gsk, Gtk  # noqa: E402
 
-from tomato_notes import NOTES_CSS, NotesView  # noqa: E402
-from tomato_tasks import TASKS_CSS, TasksView  # noqa: E402
+from workstation_notes import NOTES_CSS, NotesView  # noqa: E402
+from workstation_tasks import TASKS_CSS, TasksView  # noqa: E402
 
-APP_ID = "dev.matheus.TomatoTimer"
-APP_NAME = "Tomato Timer"
-CONFIG_DIR = os.path.join(GLib.get_user_config_dir(), "tomato-timer")
-CACHE_DIR = os.path.join(GLib.get_user_cache_dir(), "tomato-timer")
+APP_ID = "dev.matheus.AllInOneWorkstation"
+APP_NAME = "All-in-One Workstation"
+CONFIG_DIR = os.path.join(GLib.get_user_config_dir(), "all-in-one-workstation")
+CACHE_DIR = os.path.join(GLib.get_user_cache_dir(), "all-in-one-workstation")
 STATE_FILE = os.path.join(CONFIG_DIR, "state.json")
-PANEL_FILE = os.path.join(GLib.get_user_runtime_dir(), "tomato-timer", "panel.json")
+PANEL_FILE = os.path.join(GLib.get_user_runtime_dir(), "all-in-one-workstation", "panel.json")
 
 MODES = {"pomodoro": "Pomodoro", "short": "Short Break", "long": "Long Break"}
 SOUNDS = ["80s Alarm", "Alarm Clock", "Wristwatch Alarm", "Elevator Ding", "Ding", "Door Bell"]
@@ -316,7 +316,7 @@ class OptionsWindow(Gtk.Window):
             spin.set_value(DEFAULTS["times"][key])
 
 
-class TomatoWindow(Gtk.ApplicationWindow):
+class WorkstationWindow(Gtk.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title=APP_NAME)
         self.store = Store()
@@ -634,7 +634,7 @@ class TomatoWindow(Gtk.ApplicationWindow):
         return False
 
 
-class TomatoApp(Gtk.Application):
+class WorkstationApp(Gtk.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID)
 
@@ -648,9 +648,9 @@ class TomatoApp(Gtk.Application):
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     def do_activate(self):
-        window = self.get_active_window() or TomatoWindow(self)
+        window = self.get_active_window() or WorkstationWindow(self)
         window.present()
 
 
 if __name__ == "__main__":
-    sys.exit(TomatoApp().run(sys.argv))
+    sys.exit(WorkstationApp().run(sys.argv))

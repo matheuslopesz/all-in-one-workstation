@@ -6,15 +6,19 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
-const APP_ID = 'dev.matheus.TomatoTimer';
+const APP_ID = 'dev.matheus.AllInOneWorkstation';
 const COLORS = {pomodoro: '#ff8a85', short: '#8fd8db', long: '#9cc6e6'};
 
-export default class TomatoTimerPanel extends Extension {
+export default class WorkstationPanel extends Extension {
     enable() {
-        this._path = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'tomato-timer', 'panel.json']);
-        this._button = new PanelMenu.Button(0.0, 'Tomato Timer', true);
+        this._path = GLib.build_filenamev([GLib.get_user_runtime_dir(), 'all-in-one-workstation', 'panel.json']);
+        this._button = new PanelMenu.Button(0.0, 'All-in-One Workstation', true);
+        this._icon = new St.Icon({icon_name: 'alarm-symbolic', style_class: 'system-status-icon'});
         this._label = new St.Label({y_align: Clutter.ActorAlign.CENTER});
-        this._button.add_child(this._label);
+        const box = new St.BoxLayout();
+        box.add_child(this._icon);
+        box.add_child(this._label);
+        this._button.add_child(box);
         this._button.connect('button-press-event', () => {
             Gio.DesktopAppInfo.new(`${APP_ID}.desktop`)?.launch([], null);
             return Clutter.EVENT_STOP;
@@ -32,6 +36,7 @@ export default class TomatoTimerPanel extends Extension {
         this._tickId = null;
         this._button.destroy();
         this._button = null;
+        this._icon = null;
         this._label = null;
     }
 
@@ -55,8 +60,10 @@ export default class TomatoTimerPanel extends Extension {
             ? Math.max(0, Math.ceil(state.end_at - Date.now() / 1000))
             : state.remaining;
         const clock = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
-        this._label.text = `🍅 ${clock}${state.running ? '' : ' ⏸'}`;
-        this._label.style = `color: ${COLORS[state.mode] ?? 'white'}; font-weight: bold;`;
+        const style = `color: ${COLORS[state.mode] ?? 'white'}; font-weight: bold;`;
+        this._label.text = `${clock}${state.running ? '' : ' ⏸'}`;
+        this._label.style = style;
+        this._icon.style = style;
         this._button.show();
     }
 }

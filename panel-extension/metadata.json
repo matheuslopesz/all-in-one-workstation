@@ -1,6 +1,6 @@
 {
-  "uuid": "tomato-timer@matheus.dev",
-  "name": "Tomato Timer Panel",
-  "description": "Shows the Tomato Timer countdown in the top bar",
+  "uuid": "all-in-one-workstation@matheus.dev",
+  "name": "All-in-One Workstation Panel",
+  "description": "Shows the All-in-One Workstation timer in the top bar",
   "shell-version": ["45", "46", "47", "48"]
 }
