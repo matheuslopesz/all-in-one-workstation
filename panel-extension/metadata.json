@@ -1,0 +1,6 @@
+{
+  "uuid": "tomato-timer@matheus.dev",
+  "name": "Tomato Timer Panel",
+  "description": "Shows the Tomato Timer countdown in the top bar",
+  "shell-version": ["45", "46", "47", "48"]
+}
