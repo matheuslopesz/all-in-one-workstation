@@ -8,9 +8,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
+from workstation_theme import CYAN  # noqa: E402
+
 NOTES_DIR = os.path.join(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) or GLib.get_home_dir(),
                          "Workstation Notes")
-ACCENT = "#7f6df2"
+ACCENT = CYAN
 LINK_RE = re.compile(r"\[\[([^\]|#\n]+)([#|][^\]\n]*)?\]\]")
 URL_LINK_RE = re.compile(r"\[[^\]\n]+\]\(([^)\n]+)\)")
 HEADING_RE = re.compile(r"^(#{1,6}) ")
@@ -35,11 +37,11 @@ TAGS = {
     "bold": {"weight": 700},
     "italic": {"style": Pango.Style.ITALIC},
     "strike": {"strikethrough": True},
-    "mark": {"background": "rgba(255,208,0,0.35)"},
+    "mark": {"background": "rgba(255,113,206,0.35)"},
     "code": {"family": "monospace", "background": "rgba(127,127,127,0.15)"},
     "code_block": {"family": "monospace", "paragraph_background": "rgba(127,127,127,0.10)"},
     "link": {"foreground": ACCENT, "underline": Pango.Underline.SINGLE},
-    "hashtag": {"foreground": ACCENT, "background": "rgba(127,109,242,0.12)"},
+    "hashtag": {"foreground": ACCENT, "background": "rgba(1,205,254,0.14)"},
     "syntax": {"foreground": "rgba(128,128,128,0.75)"},
     "quote": {"foreground": "rgba(128,128,128,1)", "style": Pango.Style.ITALIC, "left_margin": 16},
     "bullet": {"foreground": ACCENT, "weight": 700},

@@ -43,6 +43,7 @@ migrate_from_tomato_timer
 install -Dm755 workstation.py "$LIB/workstation.py"
 install -Dm644 workstation_tasks.py "$LIB/workstation_tasks.py"
 install -Dm644 workstation_notes.py "$LIB/workstation_notes.py"
+install -Dm644 workstation_theme.py "$LIB/workstation_theme.py"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$LIB/workstation.py" "$HOME/.local/bin/$SLUG"
 install -Dm644 workstation.svg "$HOME/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"

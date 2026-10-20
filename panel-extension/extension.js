@@ -7,7 +7,7 @@ import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const APP_ID = 'dev.matheus.AllInOneWorkstation';
-const COLORS = {pomodoro: '#ff8a85', short: '#8fd8db', long: '#9cc6e6'};
+const COLORS = {pomodoro: '#ff71ce', short: '#01cdfe', long: '#b967ff'};
 
 export default class WorkstationPanel extends Extension {
     enable() {

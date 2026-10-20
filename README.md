@@ -14,6 +14,10 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 - **Alarme**: 6 sons sintetizados na hora (sem arquivos de áudio) e volume ajustável (Mute, 10%–100%)
 - **Notificações** de desktop quando o tempo acaba e auto start opcional do próximo ciclo
 - **Tasks**: lista de tarefas com projetos, prioridades e datas. Um clique inicia um pomodoro focado na tarefa
+- **Board**: cada projeto pode ser visto em lista ou em board (kanban), com seções como colunas e arrastar e soltar entre elas
+- **Sub-tasks**: tarefas dentro de tarefas, em quantos níveis quiser. Concluir a tarefa conclui as sub-tasks
+- **Copiar para o Claude**: o botão 🤖 de uma tarefa copia ela e todas as sub-tasks como um plano de implementação pronto para colar no Claude
+- **Tema vaporwave**: neon rosa, ciano e roxo sobre fundo noturno, inclusive no timer da barra superior
 - **Notes**: notas em Markdown salvas em `~/Documentos/Workstation Notes`
 - **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
@@ -58,6 +62,7 @@ Para remover: `./uninstall.sh`
 workstation.py           janela principal, timer, sons e opções
 workstation_tasks.py     aba Tasks
 workstation_notes.py     aba Notes
+workstation_theme.py     paleta e CSS do tema vaporwave
 panel-extension/         extensão do GNOME Shell (barra superior)
 install.sh/uninstall.sh  instalação local em ~/.local
 ```

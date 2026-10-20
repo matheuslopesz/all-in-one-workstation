@@ -20,6 +20,7 @@ from gi.repository import Gdk, GLib, Graphene, Gsk, Gtk  # noqa: E402
 
 from workstation_notes import NOTES_CSS, NotesView  # noqa: E402
 from workstation_tasks import TASKS_CSS, TasksView  # noqa: E402
+from workstation_theme import PINK, THEME_CSS  # noqa: E402
 
 APP_ID = "dev.matheus.AllInOneWorkstation"
 APP_NAME = "All-in-One Workstation"
@@ -210,7 +211,7 @@ class GoalBar(Gtk.Widget):
         track = Gdk.RGBA()
         track.red, track.green, track.blue, track.alpha = fg.red, fg.green, fg.blue, 0.1
         fill = Gdk.RGBA()
-        fill.parse("#d9534f")
+        fill.parse(PINK)
         snapshot.push_rounded_clip(clip)
         snapshot.append_color(track, bounds)
         snapshot.append_color(fill, Graphene.Rect().init(0, 0, width * self.fraction, height))
@@ -641,9 +642,10 @@ class WorkstationApp(Gtk.Application):
     def do_startup(self):
         Gtk.Application.do_startup(self)
         GLib.set_application_name(APP_NAME)
+        Gtk.Settings.get_default().props.gtk_application_prefer_dark_theme = True
         Gtk.Window.set_default_icon_name(APP_ID)
         provider = Gtk.CssProvider()
-        provider.load_from_string(CSS + TASKS_CSS + NOTES_CSS)
+        provider.load_from_string(CSS + TASKS_CSS + NOTES_CSS + THEME_CSS)
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
