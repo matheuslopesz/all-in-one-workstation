@@ -1,6 +1,5 @@
 import os
 import re
-from datetime import date
 
 import gi
 
@@ -8,53 +7,58 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 
-from workstation_theme import CYAN  # noqa: E402
+from workstation_theme import ACCENT, GREEN, PURPLE  # noqa: E402
 
 NOTES_DIR = os.path.join(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) or GLib.get_home_dir(),
                          "Workstation Notes")
-ACCENT = CYAN
-LINK_RE = re.compile(r"\[\[([^\]|#\n]+)([#|][^\]\n]*)?\]\]")
-URL_LINK_RE = re.compile(r"\[[^\]\n]+\]\(([^)\n]+)\)")
-HEADING_RE = re.compile(r"^(#{1,6}) ")
-TASK_RE = re.compile(r"^\s*[-*+] \[([ xX])\] ")
-LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+\.) ")
-INLINE_RULES = [
-    (re.compile(r"`[^`\n]+`"), "code", 1),
-    (re.compile(r"\*\*[^*\n]+\*\*"), "bold", 2),
-    (re.compile(r"(?<![*\w])\*[^*\n]+\*(?![*\w])|(?<!\w)_[^_\n]+_(?!\w)"), "italic", 1),
-    (re.compile(r"~~[^~\n]+~~"), "strike", 2),
-    (re.compile(r"==[^=\n]+=="), "mark", 2),
-    (URL_LINK_RE, "link", 0),
-    (re.compile(r"(?<!\S)#[\w/-]+"), "hashtag", 0),
-]
+INLINE = ["bold", "italic", "underline", "strike", "mark", "code"]
+BLOCKS = ["h1", "h2", "h3", "quote", "codeblock", "table"]
+LISTS = ["bullet", "numbered", "check"]
+BLOCK_MENU = [("p", "Text"), ("h1", "Heading 1"), ("h2", "Heading 2"), ("h3", "Heading 3"),
+              ("quote", "Quote"), ("codeblock", "Code block")]
+MARKERS = {"bullet": "•", "check": "☐"}
+CHECKED = "☑"
 TAGS = {
-    "h1": {"weight": 800, "scale": 1.8},
-    "h2": {"weight": 800, "scale": 1.5},
-    "h3": {"weight": 700, "scale": 1.3},
-    "h4": {"weight": 700, "scale": 1.15},
-    "h5": {"weight": 700, "scale": 1.05},
-    "h6": {"weight": 700},
+    "h1": {"weight": 800, "scale": 1.8, "pixels_above_lines": 10},
+    "h2": {"weight": 800, "scale": 1.45, "pixels_above_lines": 8},
+    "h3": {"weight": 700, "scale": 1.2, "pixels_above_lines": 6},
+    "quote": {"style": Pango.Style.ITALIC, "left_margin": 18, "foreground": "rgba(248,248,242,0.7)"},
+    "codeblock": {"family": "monospace", "paragraph_background": "rgba(0,0,0,0.25)", "left_margin": 12},
+    "table": {"family": "monospace", "scale": 0.9},
     "bold": {"weight": 700},
     "italic": {"style": Pango.Style.ITALIC},
+    "underline": {"underline": Pango.Underline.SINGLE},
     "strike": {"strikethrough": True},
-    "mark": {"background": "rgba(255,113,206,0.35)"},
-    "code": {"family": "monospace", "background": "rgba(127,127,127,0.15)"},
-    "code_block": {"family": "monospace", "paragraph_background": "rgba(127,127,127,0.10)"},
-    "link": {"foreground": ACCENT, "underline": Pango.Underline.SINGLE},
-    "hashtag": {"foreground": ACCENT, "background": "rgba(1,205,254,0.14)"},
-    "syntax": {"foreground": "rgba(128,128,128,0.75)"},
-    "quote": {"foreground": "rgba(128,128,128,1)", "style": Pango.Style.ITALIC, "left_margin": 16},
-    "bullet": {"foreground": ACCENT, "weight": 700},
-    "done": {"strikethrough": True, "foreground": "rgba(128,128,128,1)"},
+    "mark": {"background": "rgba(241,250,140,0.3)"},
+    "code": {"family": "monospace", "foreground": GREEN, "background": "rgba(0,0,0,0.25)"},
+    "marker": {"editable": False, "foreground": PURPLE, "weight": 700},
+    "done": {"strikethrough": True, "foreground": "rgba(248,248,242,0.4)"},
 }
+# Markdown is only the file format: styled text is wrapped when saving and parsed back when loading.
+ORDER = ["bold", "italic", "underline", "strike", "mark"]
+WRAPS = {"bold": ("**", "**"), "italic": ("_", "_"), "underline": ("<u>", "</u>"), "strike": ("~~", "~~"),
+         "mark": ("==", "==")}
+INLINE_RE = re.compile(
+    r"`([^`\n]+)`"
+    r"|\*\*(.+?)\*\*"
+    r"|<u>(.+?)</u>"
+    r"|~~(.+?)~~"
+    r"|==(.+?)=="
+    r"|(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)"
+    r"|(?<![\w*])\*(?![\s*])(.+?)(?<![\s*])\*(?![\w*])"
+    r"|\[\[([^\]|#\n]+)(?:#[^\]|\n]*)?(?:\|([^\]\n]+))?\]\]"
+    r"|\[([^\]\n]+)\]\(([^)\n]+)\)")
+STYLED = ["bold", "underline", "strike", "mark", "italic", "italic"]
+ESCAPED_RE = re.compile(r"\\([\\`*_~=\[\]<>|#+\-.!()])")
+LITERAL_BLOCK_RE = re.compile(r"#{1,6} |>|[-*+] |\d+[.)] ")
 WELCOME = """# Welcome
 
-Notes are plain **Markdown** files in this folder, so you can also open it as an Obsidian vault.
+Notes work like a regular document: use the toolbar above to format text.
 
-- Link notes with [[double brackets]] and *Ctrl+click* to follow (missing notes are created)
-- Notes that link here show up under **Linked mentions**
-- Use the calendar button for today's daily note
-- Also: `code`, ==highlight==, ~~strike~~, #tags, > quotes and - [ ] tasks
+- Pick **Heading**, **Quote** or **Code block** in the first menu
+- Make text **bold**, _italic_, <u>underlined</u>, ~~struck~~ or ==highlighted==
+- [ ] Click a checkbox to tick it
+- [x] Everything is saved automatically
 """
 
 NOTES_CSS = f"""
@@ -67,7 +71,9 @@ NOTES_CSS = f"""
 entry.note-title {{ background: transparent; border: none; box-shadow: none; outline: none;
                    font-size: 26px; font-weight: 800; padding: 0; }}
 textview.note-body, textview.note-body text {{ background: transparent; font-size: 15px; }}
-.backlink {{ color: {ACCENT}; }}
+.note-toolbar {{ padding-bottom: 8px; border-bottom: 1px solid alpha(currentColor, 0.12); }}
+.note-toolbar button {{ min-width: 30px; padding: 4px 6px; font-weight: bold; }}
+.note-toolbar button.active {{ background: alpha({PURPLE}, 0.25); color: {PURPLE}; }}
 """
 
 
@@ -75,11 +81,127 @@ def safe_title(title):
     return re.sub(r'[\\/:*?"<>|]', "-", title).strip().lstrip(".")
 
 
+def split_inline(text, tags=()):
+    out, pos = [], 0
+    for m in INLINE_RE.finditer(text):
+        out.append((text[pos:m.start()], tags))
+        code, *styled = m.groups()[:7]
+        page, alias, label, url = m.groups()[7:]
+        if code is not None:
+            out.append((code, tags + ("code",)))
+        elif page:
+            out.append(((alias or page).strip(), tags))
+        elif label:
+            out += split_inline(label, tags + (f"link:{url}",))
+        else:
+            i = next(i for i, group in enumerate(styled) if group is not None)
+            out += split_inline(styled[i], tags + (STYLED[i],))
+        pos = m.end()
+    out.append((text[pos:], tags))
+    return out
+
+
+def parse_inline(text):
+    escaped = []
+
+    def stash(m):
+        escaped.append(m.group(1))
+        return chr(0xE000 + len(escaped) - 1)
+
+    def restore(s):
+        return re.sub("[\ue000-\uf8ff]", lambda m: escaped[ord(m.group()) - 0xE000], s)
+
+    return [(restore(t), tags) for t, tags in split_inline(ESCAPED_RE.sub(stash, text)) if t]
+
+
+def parse_markdown(text):
+    """One (block, marker, [(text, inline tags)]) entry per line; marker is the list bullet, box or number."""
+    lines = []
+    in_code = False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code or line.lstrip().startswith("|"):
+            lines.append(("codeblock" if in_code else "table", None, [(line, ())] if line else []))
+            continue
+        block, marker = "p", None
+        if line.startswith("\\") and LITERAL_BLOCK_RE.match(line[1:]):
+            line = line[1:]
+        elif m := re.match(r"(#{1,6}) ", line):
+            block = f"h{min(len(m.group(1)), 3)}"
+        elif m := re.match(r"> ?", line):
+            block = "quote"
+        elif m := re.match(r"\s*[-*+] \[([ xX])\] ", line):
+            block, marker = "check", MARKERS["check"] if m.group(1) == " " else CHECKED
+        elif m := re.match(r"\s*(\d+)[.)] ", line):
+            block, marker = "numbered", m.group(1) + "."
+        elif m := re.match(r"\s*[-*+] ", line):
+            block, marker = "bullet", MARKERS["bullet"]
+        lines.append((block, marker, parse_inline(line[m.end():] if block != "p" else line)))
+    return lines
+
+
+def escape(text):
+    # Only characters that would otherwise be read back as formatting get a backslash.
+    text = re.sub(r"\\(?=[\\`*_~=\[\]<>|#+\-.!()]|$)", r"\\\\", text)
+    text = re.sub(r"([`*])", r"\\\1", text)
+    text = re.sub(r"(?<!\w)_|_(?!\w)", r"\\_", text)
+    text = re.sub(r"\[(?=\[|[^\]\n]*\]\()", r"\\[", text)
+    text = re.sub(r"<(?=/?u>)", r"\\<", text)
+    return text.replace("~~", "\\~\\~").replace("==", "\\=\\=")
+
+
+def wrap(name):
+    return ("[", f"]({name[5:]})") if name.startswith("link:") else WRAPS[name]
+
+
+def inline_markdown(segments):
+    out, stack = "", []
+
+    def close(keep):
+        nonlocal out
+        body = out.rstrip(" ")
+        space = out[len(body):]
+        for name in reversed(stack[keep:]):
+            body += wrap(name)[1]
+        del stack[keep:]
+        out = body + space
+
+    for text, tags in segments:
+        if "code" not in tags and not text.strip():
+            out += text
+            continue
+        wanted = [t for t in tags if t.startswith("link:")] + [t for t in ORDER if t in tags]
+        keep = 0
+        while keep < min(len(stack), len(wanted)) and stack[keep] == wanted[keep]:
+            keep += 1
+        close(keep)
+        if "code" not in tags:
+            lead = text[:len(text) - len(text.lstrip(" "))]
+            out, text = out + lead, text[len(lead):]
+        for name in wanted[keep:]:
+            stack.append(name)
+            out += wrap(name)[0]
+        out += f"`{text}`" if "code" in tags else escape(text)
+    close(0)
+    return out
+
+
+def line_markdown(block, marker, segments):
+    body = inline_markdown(segments)
+    if block == "p":
+        return "\\" + body if LITERAL_BLOCK_RE.match(body) else body
+    prefix = {"h1": "# ", "h2": "## ", "h3": "### ", "quote": "> ", "bullet": "- ", "numbered": f"{marker} ",
+              "check": "- [x] " if marker == CHECKED else "- [ ] "}[block]
+    return prefix + body
+
+
 def preview_of(text):
-    for line in text.splitlines():
-        line = line.strip()
-        if line and not line.startswith("#"):
-            return re.sub(r"[*_`=~\[\]]", "", line)
+    for block, _marker, segments in parse_markdown(text):
+        line = "".join(t for t, _tags in segments).strip()
+        if line and block not in ("h1", "h2", "h3"):
+            return line
     return ""
 
 
@@ -123,19 +245,9 @@ class NoteStore:
 
     def rename(self, old, new):
         os.rename(self.path(old), self.path(new))
-        for title in self.titles():
-            text = self.read(title)
-            updated = LINK_RE.sub(lambda m: f"[[{new}{m.group(2) or ''}]]" if m.group(1).strip() == old
-                                  else m.group(0), text)
-            if updated != text:
-                self.write(title, updated)
 
     def trash(self, title):
         Gio.File.new_for_path(self.path(title)).trash(None)
-
-    def backlinks(self, target):
-        return [t for t in self.titles() if t != target
-                and any(m.group(1).strip() == target for m in LINK_RE.finditer(self.read(t)))]
 
 
 class NotesView(Gtk.Paned):
@@ -145,8 +257,14 @@ class NotesView(Gtk.Paned):
         self.store = NoteStore()
         self.current = None
         self.loading = False
+        self.applying = False
+        self.syncing = False
         self.syncing_list = False
         self.save_id = None
+        self.insert_offset = 0
+        self.inserting = False
+        self.pending = None
+        self.pending_block = None
         self.set_start_child(self.build_sidebar())
         self.set_end_child(self.build_editor())
 
@@ -165,11 +283,9 @@ class NotesView(Gtk.Paned):
         self.search = Gtk.SearchEntry(placeholder_text="Search notes", hexpand=True)
         self.search.connect("search-changed", lambda _e: self.rebuild_list())
         top.append(self.search)
-        for icon, tip, handler in (("x-office-calendar-symbolic", "Today's daily note", self.open_daily),
-                                   ("document-new-symbolic", "New note (Ctrl+N)", self.new_note)):
-            button = Gtk.Button(icon_name=icon, tooltip_text=tip, css_classes=["flat"])
-            button.connect("clicked", lambda _b, h=handler: h())
-            top.append(button)
+        new = Gtk.Button(icon_name="document-new-symbolic", tooltip_text="New note (Ctrl+N)", css_classes=["flat"])
+        new.connect("clicked", lambda _b: self.new_note())
+        top.append(new)
         box.append(top)
 
         self.note_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
@@ -195,31 +311,64 @@ class NotesView(Gtk.Paned):
         head.append(self.title_entry)
         head.append(self.note_menu())
         box.append(head)
+        box.append(self.build_toolbar())
 
         self.buffer = Gtk.TextBuffer()
         for name, props in TAGS.items():
             self.buffer.create_tag(name, **props)
         self.buffer.connect("changed", self.on_changed)
+        self.buffer.connect("insert-text", self.on_insert_before)
+        self.buffer.connect_after("insert-text", self.on_insert_after)
+        self.buffer.connect("mark-set", self.on_mark_set)
         self.body = Gtk.TextView(buffer=self.buffer, wrap_mode=Gtk.WrapMode.WORD_CHAR,
                                  pixels_below_lines=4, css_classes=["note-body"],
                                  tooltip_text="Ctrl+click a link to open it")
         click = Gtk.GestureClick(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         click.connect("pressed", self.on_body_click)
         self.body.add_controller(click)
+        keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        keys.connect("key-pressed", self.on_key)
+        self.body.add_controller(keys)
         body_scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, hexpand=True)
         body_scroller.set_child(self.body)
         box.append(body_scroller)
-
-        self.backlinks = Gtk.Expander(expanded=True)
-        self.backlink_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_top=6)
-        backlink_scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, propagate_natural_height=True,
-                                               max_content_height=160)
-        backlink_scroller.set_child(self.backlink_list)
-        self.backlinks.set_child(backlink_scroller)
-        box.append(Gtk.Separator())
-        box.append(self.backlinks)
         self.pages.add_named(box, "editor")
         return self.pages
+
+    def build_toolbar(self):
+        bar = Gtk.Box(spacing=4, css_classes=["note-toolbar"])
+        self.block_menu = Gtk.DropDown.new_from_strings([label for _block, label in BLOCK_MENU])
+        self.block_menu.set_focus_on_click(False)
+        self.block_menu.connect("notify::selected", self.on_block_menu)
+        bar.append(self.block_menu)
+        bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=4, margin_end=4))
+
+        self.format_buttons = {}
+        for name, icon, label, tip in (("bold", "format-text-bold-symbolic", None, "Bold (Ctrl+B)"),
+                                       ("italic", "format-text-italic-symbolic", None, "Italic (Ctrl+I)"),
+                                       ("underline", "format-text-underline-symbolic", None, "Underline (Ctrl+U)"),
+                                       ("strike", "format-text-strikethrough-symbolic", None, "Strikethrough"),
+                                       ("mark", None, "H", "Highlight"),
+                                       ("code", None, "</>", "Inline code"),
+                                       (None, None, None, None),
+                                       ("bullet", "view-list-bullet-symbolic", None, "Bulleted list"),
+                                       ("numbered", "view-list-ordered-symbolic", None, "Numbered list"),
+                                       ("check", "checkbox-checked-symbolic", None, "Checklist")):
+            if name is None:
+                bar.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=4, margin_end=4))
+                continue
+            button = Gtk.Button(tooltip_text=tip, focus_on_click=False, css_classes=["flat"])
+            if icon:
+                button.set_icon_name(icon)
+            else:
+                button.set_label(label)
+            if name in LISTS:
+                button.connect("clicked", lambda _b, n=name: self.toggle_list(n))
+            else:
+                button.connect("clicked", lambda _b, n=name: self.toggle_inline(n))
+            self.format_buttons[name] = button
+            bar.append(button)
+        return bar
 
     def note_menu(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -255,18 +404,6 @@ class NotesView(Gtk.Paned):
                 self.note_list.select_row(row)
         self.syncing_list = False
 
-    def rebuild_backlinks(self):
-        while child := self.backlink_list.get_first_child():
-            self.backlink_list.remove(child)
-        titles = self.store.backlinks(self.current)
-        self.backlinks.set_label(f"Linked mentions ({len(titles)})")
-        if not titles:
-            self.backlink_list.append(Gtk.Label(label="No notes link here yet.", xalign=0, css_classes=["hint"]))
-        for title in titles:
-            button = Gtk.Button(label=title, halign=Gtk.Align.START, css_classes=["flat", "backlink"])
-            button.connect("clicked", lambda _b, t=title: self.open_note(t))
-            self.backlink_list.append(button)
-
     def open_note(self, title):
         self.flush()
         self.current = title
@@ -274,33 +411,14 @@ class NotesView(Gtk.Paned):
             self.pages.set_visible_child_name("empty")
             self.rebuild_list()
             return
-        self.loading = True
         self.title_entry.set_text(title)
-        self.buffer.set_text(self.store.read(title))
-        self.buffer.place_cursor(self.buffer.get_start_iter())
-        self.buffer.set_modified(False)
-        self.loading = False
-        self.highlight()
+        self.load(self.store.read(title))
         self.pages.set_visible_child_name("editor")
         self.rebuild_list()
-        self.rebuild_backlinks()
-
-    def open_or_create(self, title, text=""):
-        title = safe_title(title)
-        if title and not self.store.exists(title):
-            self.store.write(title, text)
-        if title:
-            self.open_note(title)
 
     def new_note(self):
         self.open_note(self.store.create())
         self.title_entry.grab_focus()
-
-    def open_daily(self):
-        today = date.today().isoformat()
-        self.open_or_create(today, f"# {today}\n\n")
-        self.body.grab_focus()
-        self.buffer.place_cursor(self.buffer.get_end_iter())
 
     def commit_title(self):
         if self.current is None:
@@ -313,7 +431,6 @@ class NotesView(Gtk.Paned):
         self.store.rename(self.current, new)
         self.current = new
         self.rebuild_list()
-        self.rebuild_backlinks()
 
     def confirm_delete(self):
         title = self.current
@@ -337,10 +454,57 @@ class NotesView(Gtk.Paned):
         if row and not self.syncing_list and row.title != self.current:
             self.open_note(row.title)
 
+    # Loading and saving
+
+    def load(self, text):
+        self.loading = True
+        self.buffer.set_text("")
+        lines = parse_markdown(text)
+        for i, (block, marker, segments) in enumerate(lines):
+            line_tags = [block] if block in BLOCKS else []
+            if marker:
+                self.insert(marker + " ", "marker")
+            for chunk, tags in segments:
+                for name in tags:
+                    self.ensure_link_tag(name)
+                self.insert(chunk, *line_tags, *tags, *(["done"] if marker == CHECKED else []))
+            if i < len(lines) - 1:
+                self.insert("\n", *line_tags)
+        self.buffer.place_cursor(self.buffer.get_start_iter())
+        self.buffer.set_modified(False)
+        self.pending = self.pending_block = None
+        self.loading = False
+        self.sync_toolbar()
+
+    def insert(self, text, *tags):
+        self.buffer.insert_with_tags_by_name(self.buffer.get_end_iter(), text, *tags)
+
+    def ensure_link_tag(self, name):
+        if name.startswith("link:") and not self.tag(name):
+            self.buffer.create_tag(name, foreground=ACCENT, underline=Pango.Underline.SINGLE)
+
+    def to_markdown(self):
+        out, in_code = [], False
+        for n in range(self.buffer.get_line_count()):
+            block = self.line_block(n)
+            if (block == "codeblock") != in_code:
+                out.append("```")
+                in_code = not in_code
+            start, end = self.line_bounds(n)
+            if block in ("codeblock", "table"):
+                out.append(self.buffer.get_text(start, end, True))
+            else:
+                out.append(line_markdown(block, self.marker_text(n), self.line_segments(n)))
+        if in_code:
+            out.append("```")
+        return "\n".join(out)
+
     def on_changed(self, _buffer):
-        if self.loading:
-            return
-        self.highlight()
+        if not self.loading:
+            self.schedule_save()
+
+    def schedule_save(self):
+        self.buffer.set_modified(True)
         self.cancel_save()
         self.save_id = GLib.timeout_add(600, self.flush)
 
@@ -354,78 +518,269 @@ class NotesView(Gtk.Paned):
             return False
         self.save_id = None
         if self.current is not None and self.buffer.get_modified():
-            start, end = self.buffer.get_bounds()
-            self.store.write(self.current, self.buffer.get_text(start, end, True))
+            self.store.write(self.current, self.to_markdown())
             self.buffer.set_modified(False)
             self.rebuild_list()
         return False
 
-    def highlight(self):
-        start, end = self.buffer.get_bounds()
-        self.buffer.remove_all_tags(start, end)
-        offset = 0
-        in_code = False
-        for line in self.buffer.get_text(start, end, True).split("\n"):
-            tag = self.tagger(offset)
-            if line.startswith("```"):
-                tag("code_block", 0, len(line))
-                tag("syntax", 0, len(line))
-                in_code = not in_code
-            elif in_code:
-                tag("code_block", 0, len(line))
+    # Reading lines
+
+    def tag(self, name):
+        return self.buffer.get_tag_table().lookup(name)
+
+    def cursor(self):
+        return self.buffer.get_iter_at_mark(self.buffer.get_insert())
+
+    def line_bounds(self, n):
+        start = self.buffer.get_iter_at_line(n)[1]
+        end = start.copy()
+        if not end.ends_line():
+            end.forward_to_line_end()
+        return start, end
+
+    def body_start(self, n):
+        start = self.line_bounds(n)[0]
+        if start.has_tag(self.tag("marker")):
+            start.forward_to_tag_toggle(self.tag("marker"))
+        return start
+
+    def marker_text(self, n):
+        start = self.line_bounds(n)[0]
+        return self.buffer.get_text(start, self.body_start(n), True).strip() or None
+
+    def line_block(self, n):
+        start = self.line_bounds(n)[0]
+        if start.has_tag(self.tag("marker")):
+            first = start.get_char()
+            return "bullet" if first == MARKERS["bullet"] else "numbered" if first.isdigit() else "check"
+        return next((b for b in BLOCKS if start.has_tag(self.tag(b))), "p")
+
+    def line_segments(self, n):
+        start, end = self.body_start(n), self.line_bounds(n)[1]
+        segments = []
+        while start.compare(end) < 0:
+            stop = start.copy()
+            stop.forward_to_tag_toggle(None)
+            if stop.compare(end) > 0 or stop.equal(start):
+                stop = end.copy()
+            links = [t.props.name for t in start.get_tags() if (t.props.name or "").startswith("link:")]
+            segments.append((self.buffer.get_text(start, stop, True),
+                             tuple(t for t in INLINE if start.has_tag(self.tag(t))) + tuple(links)))
+            start = stop
+        return segments
+
+    def selected_lines(self):
+        bounds = self.buffer.get_selection_bounds()
+        start, end = bounds if bounds else (self.cursor(), self.cursor())
+        return range(start.get_line(), end.get_line() + 1)
+
+    def range_has(self, name, start, end):
+        tag = self.tag(name)
+        it = start.copy()
+        while it.compare(end) < 0:
+            if it.get_char() != "\n" and not it.has_tag(tag) and not it.has_tag(self.tag("marker")):
+                return False
+            it.forward_char()
+        return True
+
+    def typing_tags(self):
+        return self.typing_tags_at(self.cursor())
+
+    def typing_tags_at(self, start):
+        if self.pending is not None:
+            return self.pending
+        if start.starts_line():
+            return []
+        before = start.copy()
+        before.backward_char()
+        return [t for t in INLINE if before.has_tag(self.tag(t))]
+
+    # Editing
+
+    def set_block(self, n, block):
+        self.applying = True
+        start = self.line_bounds(n)[0]
+        self.buffer.delete(start, self.body_start(n))
+        start, end = self.line_bounds(n)
+        stop = end.copy()
+        stop.forward_char()
+        for name in BLOCKS + ["done"]:
+            self.buffer.remove_tag_by_name(name, start, stop)
+        if block in LISTS:
+            self.buffer.insert_with_tags_by_name(start, f"{MARKERS.get(block) or self.next_number(n)} ", "marker")
+        elif block in BLOCKS:
+            if start.equal(stop):
+                self.pending_block = block
             else:
-                self.highlight_line(line, tag)
-            offset += len(line) + 1
+                self.buffer.apply_tag_by_name(block, start, stop)
+        self.renumber()
+        self.applying = False
+        self.schedule_save()
 
-    def tagger(self, offset):
-        def tag(name, a, b):
-            self.buffer.apply_tag_by_name(name, self.buffer.get_iter_at_offset(offset + a),
-                                          self.buffer.get_iter_at_offset(offset + b))
-        return tag
+    def next_number(self, n):
+        if n > 0 and self.line_block(n - 1) == "numbered":
+            return f"{int(self.marker_text(n - 1)[:-1]) + 1}."
+        return "1."
 
-    def highlight_line(self, line, tag):
-        if heading := HEADING_RE.match(line):
-            tag(f"h{len(heading.group(1))}", 0, len(line))
-            tag("syntax", 0, heading.end())
-        elif line.startswith(">"):
-            tag("quote", 0, len(line))
-        elif task := TASK_RE.match(line):
-            tag("bullet", 0, task.end())
-            if task.group(1) != " ":
-                tag("done", task.end(), len(line))
-        elif bullet := LIST_RE.match(line):
-            tag("bullet", 0, bullet.end())
-        for pattern, name, marker in INLINE_RULES:
-            for m in pattern.finditer(line):
-                tag(name, m.start(), m.end())
-                if marker:
-                    tag("syntax", m.start(), m.start() + marker)
-                    tag("syntax", m.end() - marker, m.end())
-        for m in LINK_RE.finditer(line):
-            tag("link", m.start(), m.end())
-            tag("syntax", m.start(), m.start() + 2)
-            tag("syntax", m.end() - 2, m.end())
+    def renumber(self):
+        expected = None
+        for n in range(self.buffer.get_line_count()):
+            if self.line_block(n) != "numbered":
+                expected = None
+                continue
+            current = int(self.marker_text(n)[:-1])
+            expected = current if expected is None else expected
+            if current != expected:
+                start = self.line_bounds(n)[0]
+                self.buffer.delete(start, self.body_start(n))
+                self.buffer.insert_with_tags_by_name(self.line_bounds(n)[0], f"{expected}. ", "marker")
+            expected += 1
+
+    def toggle_check(self, n):
+        self.applying = True
+        start = self.line_bounds(n)[0]
+        checked = start.get_char() == CHECKED
+        after = start.copy()
+        after.forward_char()
+        self.buffer.delete(start, after)
+        self.buffer.insert_with_tags_by_name(self.line_bounds(n)[0], MARKERS["check"] if checked else CHECKED,
+                                             "marker")
+        (self.buffer.remove_tag_by_name if checked else self.buffer.apply_tag_by_name)(
+            "done", self.body_start(n), self.line_bounds(n)[1])
+        self.applying = False
+
+    def toggle_inline(self, name):
+        bounds = self.buffer.get_selection_bounds()
+        if bounds:
+            start, end = bounds
+            if self.range_has(name, start, end):
+                self.buffer.remove_tag_by_name(name, start, end)
+            else:
+                self.buffer.apply_tag_by_name(name, start, end)
+            self.schedule_save()
+        else:
+            self.pending = sorted(set(self.typing_tags()) ^ {name})
+        self.body.grab_focus()
+        self.sync_toolbar()
+
+    def toggle_list(self, block):
+        lines = self.selected_lines()
+        target = "p" if all(self.line_block(n) == block for n in lines) else block
+        for n in lines:
+            self.set_block(n, target)
+        self.body.grab_focus()
+        self.sync_toolbar()
+
+    def on_block_menu(self, dropdown, _param):
+        if self.syncing:
+            return
+        for n in self.selected_lines():
+            self.set_block(n, BLOCK_MENU[dropdown.get_selected()][0])
+        self.body.grab_focus()
+        self.sync_toolbar()
+
+    def sync_toolbar(self):
+        self.syncing = True
+        block = self.pending_block or self.line_block(self.cursor().get_line())
+        blocks = [b for b, _label in BLOCK_MENU]
+        self.block_menu.set_selected(blocks.index(block) if block in blocks else 0)
+        bounds = self.buffer.get_selection_bounds()
+        active = [t for t in INLINE if self.range_has(t, *bounds)] if bounds else self.typing_tags()
+        for name, button in self.format_buttons.items():
+            on = name in active if name in INLINE else name == block
+            (button.add_css_class if on else button.remove_css_class)("active")
+        self.syncing = False
+
+    def on_insert_before(self, _buffer, location, _text, _length):
+        if not self.loading and not self.applying:
+            self.insert_offset = location.get_offset()
+            self.inserting = True
+
+    def on_insert_after(self, buffer, location, _text, _length):
+        if self.loading or self.applying:
+            return
+        self.inserting = False
+        self.applying = True
+        start = buffer.get_iter_at_offset(self.insert_offset)
+        end = location.copy()
+        probe = end.copy() if start.starts_line() else start.copy()
+        if not start.starts_line():
+            probe.backward_char()
+        blocks = [b for b in BLOCKS if probe.has_tag(self.tag(b))]
+        if self.pending_block:
+            blocks, self.pending_block = [self.pending_block], None
+        inline = self.typing_tags_at(start)
+        self.pending = None
+        for name in blocks + inline:
+            buffer.apply_tag_by_name(name, start, end)
+        for n in range(start.get_line(), end.get_line() + 1):
+            if self.marker_text(n) == CHECKED:
+                buffer.apply_tag_by_name("done", self.body_start(n), self.line_bounds(n)[1])
+        self.applying = False
+        self.sync_toolbar()
+
+    def on_mark_set(self, buffer, location, mark):
+        if mark.get_name() != "insert" or self.loading or self.inserting or self.applying:
+            return
+        self.pending = None
+        self.pending_block = None
+        body = self.body_start(location.get_line())
+        if location.compare(body) < 0 and not buffer.get_has_selection():
+            buffer.place_cursor(body)
+            return
+        self.sync_toolbar()
+
+    def on_key(self, _controller, keyval, _keycode, state):
+        if state & Gdk.ModifierType.CONTROL_MASK:
+            name = {Gdk.KEY_b: "bold", Gdk.KEY_i: "italic", Gdk.KEY_u: "underline"}.get(Gdk.keyval_to_lower(keyval))
+            if name:
+                self.toggle_inline(name)
+                return True
+            return False
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
+            return self.on_enter()
+        if keyval == Gdk.KEY_BackSpace and not self.buffer.get_has_selection():
+            return self.on_backspace()
+        return False
+
+    def on_enter(self):
+        n = self.cursor().get_line()
+        block = self.line_block(n)
+        if block in LISTS + ["quote"] and self.body_start(n).equal(self.line_bounds(n)[1]):
+            self.set_block(n, "p")
+            self.sync_toolbar()
+            return True
+        if block not in LISTS + ["h1", "h2", "h3"]:
+            return False
+        self.buffer.begin_user_action()
+        self.buffer.delete_selection(True, True)
+        self.buffer.insert_interactive_at_cursor("\n", -1, True)
+        self.set_block(n + 1, block if block in LISTS else "p")
+        self.buffer.end_user_action()
+        self.sync_toolbar()
+        return True
+
+    def on_backspace(self):
+        it = self.cursor()
+        n = it.get_line()
+        block = self.line_block(n)
+        if (block in LISTS and it.equal(self.body_start(n))) or (block in BLOCKS and it.starts_line()):
+            self.set_block(n, "p")
+            self.sync_toolbar()
+            return True
+        return False
 
     def on_body_click(self, gesture, _n, x, y):
-        if not gesture.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
-            return
         bx, by = self.body.window_to_buffer_coords(Gtk.TextWindowType.WIDGET, int(x), int(y))
         found, where = self.body.get_iter_at_location(bx, by)
         if not found:
             return
-        line_start = where.copy()
-        line_start.set_line_offset(0)
-        line_end = line_start.copy()
-        line_end.forward_to_line_end()
-        line = self.buffer.get_text(line_start, line_end, True)
-        column = where.get_line_offset()
-        for m in LINK_RE.finditer(line):
-            if m.start() <= column < m.end():
+        if (where.get_line_offset() == 0 and where.get_char() in (MARKERS["check"], CHECKED)
+                and where.has_tag(self.tag("marker"))):
+            gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+            self.toggle_check(where.get_line())
+        elif gesture.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
+            link = next((t.props.name[5:] for t in where.get_tags() if (t.props.name or "").startswith("link:")), None)
+            if link:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-                self.open_or_create(m.group(1).strip())
-                return
-        for m in URL_LINK_RE.finditer(line):
-            if m.start() <= column < m.end():
-                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-                Gtk.UriLauncher.new(m.group(1)).launch(self.get_root(), None, None, None)
-                return
+                Gtk.UriLauncher.new(link).launch(self.get_root(), None, None, None)

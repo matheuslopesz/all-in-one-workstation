@@ -11,11 +11,11 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
-from workstation_theme import CYAN, LAVENDER, MINT, NIGHT, PINK, PURPLE, YELLOW  # noqa: E402
+from workstation_theme import ACCENT, BG_DARKER, COMMENT, CYAN, GREEN, ORANGE, PURPLE, RED  # noqa: E402
 
 TASKS_FILE = os.path.join(GLib.get_user_config_dir(), "all-in-one-workstation", "tasks.json")
 INBOX = "inbox"
-PRIORITY_COLORS = {1: PINK, 2: YELLOW, 3: CYAN, 4: LAVENDER}
+PRIORITY_COLORS = {1: RED, 2: ORANGE, 3: CYAN, 4: COMMENT}
 PROJECT_COLORS = ["#db4035", "#ff9933", "#fad000", "#7ecc49", "#299438",
                   "#14aaf5", "#4073ff", "#884dff", "#e05194", "#808080"]
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -36,7 +36,7 @@ TASKS_CSS = f"""
 .sidebar {{ background: alpha(currentColor, 0.04); padding: 12px 8px; }}
 .sidebar list {{ background: transparent; }}
 .sidebar row {{ padding: 6px 10px; border-radius: 6px; }}
-.sidebar row:selected {{ background: alpha({PINK}, 0.14); color: inherit; }}
+.sidebar row:selected {{ background: alpha({ACCENT}, 0.14); color: inherit; }}
 .sidebar-head {{ font-weight: bold; opacity: 0.7; font-size: 13px; }}
 .count {{ opacity: 0.5; font-size: 12px; }}
 .task-list {{ background: transparent; }}
@@ -47,25 +47,25 @@ TASKS_CSS = f"""
                     border: 2px solid #808080; background: transparent; box-shadow: none; }}
 .task-desc {{ font-size: 12px; opacity: 0.6; }}
 .task-meta {{ font-size: 12px; }}
-.due-today {{ color: {MINT}; }}
-.due-tomorrow {{ color: {YELLOW}; }}
+.due-today {{ color: {GREEN}; }}
+.due-tomorrow {{ color: {ORANGE}; }}
 .due-week {{ color: {PURPLE}; }}
-.due-overdue {{ color: {PINK}; }}
+.due-overdue {{ color: {RED}; }}
 .due-later {{ opacity: 0.7; }}
 .task-actions {{ opacity: 0; transition: opacity 120ms; }}
 row:hover .task-actions {{ opacity: 1; }}
 .task-form {{ border: 1px solid alpha(currentColor, 0.2); border-radius: 10px; padding: 10px; }}
 .title-entry {{ font-weight: bold; }}
-.task-form button.suggested-action {{ background: {PINK}; color: {NIGHT}; border: none; box-shadow: none; }}
-.add-task {{ color: {PINK}; font-weight: bold; }}
+.task-form button.suggested-action {{ background: {ACCENT}; color: {BG_DARKER}; border: none; box-shadow: none; }}
+.add-task {{ color: {ACCENT}; font-weight: bold; }}
 .empty {{ opacity: 0.5; padding: 30px; }}
 .cal-weekday {{ font-weight: bold; font-size: 12px; opacity: 0.6; padding: 4px 6px; }}
 .cal-day {{ border: 1px solid alpha(currentColor, 0.08); padding: 4px; min-height: 110px; }}
 .cal-day.other-month {{ background: alpha(currentColor, 0.03); }}
 .cal-day.other-month .cal-num {{ opacity: 0.4; }}
-.cal-day.drop-hover {{ background: alpha({PINK}, 0.12); }}
+.cal-day.drop-hover {{ background: alpha({ACCENT}, 0.12); }}
 .cal-num {{ font-size: 12px; font-weight: bold; padding: 2px 6px; border-radius: 10px; }}
-.cal-num.cal-today {{ background: {PINK}; color: {NIGHT}; }}
+.cal-num.cal-today {{ background: {ACCENT}; color: {BG_DARKER}; }}
 .cal-add {{ opacity: 0; min-height: 20px; min-width: 20px; padding: 0; }}
 .cal-day:hover .cal-add {{ opacity: 1; }}
 .cal-task {{ font-size: 12px; padding: 1px 4px; border-radius: 4px; background: alpha(currentColor, 0.05); }}
@@ -74,7 +74,7 @@ row:hover .task-actions {{ opacity: 1; }}
 .cal-more {{ font-size: 12px; padding: 0 4px; min-height: 0; }}
 .month-label {{ font-weight: bold; }}
 .board-column {{ background: alpha(currentColor, 0.04); border-radius: 10px; padding: 8px; }}
-.board-column.drop-hover {{ background: alpha({PINK}, 0.12); }}
+.board-column.drop-hover {{ background: alpha({ACCENT}, 0.12); }}
 .column-name {{ font-weight: bold; }}
 .board-card {{ border: 1px solid alpha(currentColor, 0.12); border-radius: 8px; padding: 8px;
               background: alpha(currentColor, 0.03); }}
@@ -82,7 +82,7 @@ row:hover .task-actions {{ opacity: 1; }}
 .subtasks-head {{ font-weight: bold; font-size: 13px; }}
 """ + "".join(
     f".task-check.p{p} check {{ border-color: {c}; background: alpha({c}, 0.12); }}\n"
-    f".task-check.p{p} check:checked {{ background: {c}; color: {NIGHT}; }}\n"
+    f".task-check.p{p} check:checked {{ background: {c}; color: {BG_DARKER}; }}\n"
     for p, c in PRIORITY_COLORS.items()
 )
 

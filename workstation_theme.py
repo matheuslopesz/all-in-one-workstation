@@ -1,79 +1,83 @@
-PINK = "#ff71ce"
-CYAN = "#01cdfe"
-MINT = "#05ffa1"
-PURPLE = "#b967ff"
-YELLOW = "#fffb96"
-LAVENDER = "#9d8cc4"
-INK = "#f4e9ff"
-NIGHT = "#1b0f33"
-DUSK = "#2a1050"
+BG = "#282a36"
+BG_DARK = "#21222c"
+BG_DARKER = "#191a21"
+CURRENT = "#44475a"
+FG = "#f8f8f2"
+COMMENT = "#6272a4"
+CYAN = "#8be9fd"
+GREEN = "#50fa7b"
+ORANGE = "#ffb86c"
+PINK = "#ff79c6"
+PURPLE = "#bd93f9"
+RED = "#ff5555"
+YELLOW = "#f1fa8c"
+
+ACCENT = RED
+MODE_COLORS = {"pomodoro": RED, "short": CYAN, "long": PURPLE}
+
+MODE_CSS = "".join(
+    f".card.{mode} {{ background-image: linear-gradient(160deg, alpha({color}, 0.20), alpha({color}, 0.05));"
+    f" border-color: alpha({color}, 0.35); }}\n"
+    f".card.{mode} .timer {{ color: {color}; }}\n"
+    f".card.{mode} .mode-btn:checked {{ background: alpha({color}, 0.22); color: {color}; }}\n"
+    f".card.{mode} .ctl.start, .card.{mode} .ctl.start:hover {{ background: {color}; color: {BG_DARKER}; }}\n"
+    for mode, color in MODE_COLORS.items())
 
 THEME_CSS = f"""
-window, .background {{ background-color: {NIGHT}; color: {INK}; }}
-window.background {{ background-image: linear-gradient(180deg, {NIGHT} 0%, {DUSK} 65%, #3d0f4f 100%); }}
-headerbar {{ background: linear-gradient(90deg, alpha({PINK}, 0.22), alpha({PURPLE}, 0.22), alpha({CYAN}, 0.22)),
-                         #160a2b;
-             color: {INK}; border-bottom: 2px solid {PINK}; box-shadow: 0 2px 14px alpha({PINK}, 0.45); }}
-headerbar windowtitle, headerbar .title {{ color: {INK}; }}
-stackswitcher button {{ font-weight: bold; letter-spacing: 2px; }}
-stackswitcher button:checked {{ background: linear-gradient(90deg, {PINK}, {PURPLE}); color: {NIGHT};
-                               border-color: transparent; }}
+window, .background {{ background-color: {BG}; color: {FG}; }}
+headerbar {{ background: {BG_DARK}; color: {FG}; border-bottom: 1px solid {BG_DARKER}; box-shadow: none; }}
+headerbar:backdrop {{ background: {BG_DARK}; }}
+stackswitcher button {{ background: transparent; color: alpha({FG}, 0.65); border: none; box-shadow: none;
+                       border-radius: 6px; padding: 4px 16px; font-weight: 600; }}
+stackswitcher button:hover {{ background: alpha({FG}, 0.06); color: {FG}; }}
+stackswitcher button:checked {{ background: {CURRENT}; color: {FG}; }}
 
-button {{ background: alpha({PURPLE}, 0.14); border: 1px solid alpha({PURPLE}, 0.45); color: {INK};
-          box-shadow: none; text-shadow: none; }}
-button:hover {{ background: alpha({PINK}, 0.22); border-color: {PINK}; }}
-button:checked {{ background: alpha({CYAN}, 0.22); border-color: {CYAN}; color: {INK}; }}
-button.flat {{ background: transparent; border-color: transparent; }}
-button.flat:hover {{ background: alpha({PINK}, 0.16); }}
-button.suggested-action {{ background: linear-gradient(90deg, {PINK}, {PURPLE}); color: {NIGHT};
-                          font-weight: bold; border: none; }}
-button.destructive-action {{ color: {PINK}; }}
+button {{ background: {CURRENT}; color: {FG}; border: none; box-shadow: none; text-shadow: none; border-radius: 6px; }}
+button:hover {{ background: #50546a; }}
+button:active, button:checked {{ background: #5a5e78; }}
+button.flat {{ background: transparent; }}
+button.flat:hover {{ background: alpha({FG}, 0.07); }}
+button.flat:active, button.flat:checked {{ background: alpha({FG}, 0.12); }}
+button.suggested-action, button.suggested-action:hover {{ background: {ACCENT}; color: {BG_DARKER}; font-weight: bold; }}
+button.destructive-action {{ color: {RED}; }}
 
-entry, dropdown > button, spinbutton {{ background: alpha(black, 0.28); color: {INK};
-                                        border: 1px solid alpha({CYAN}, 0.35); box-shadow: none; }}
-entry:focus-within {{ border-color: {CYAN}; box-shadow: 0 0 8px alpha({CYAN}, 0.6); outline: none; }}
-selection, text selection {{ background-color: alpha({PINK}, 0.45); color: white; }}
+entry, spinbutton, dropdown > button {{ background: {BG_DARK}; color: {FG}; border: 1px solid {CURRENT};
+                                        border-radius: 6px; box-shadow: none; }}
+dropdown > button:hover {{ background: {BG_DARKER}; }}
+entry:focus-within, spinbutton:focus-within {{ border-color: {PURPLE}; box-shadow: 0 0 0 1px alpha({PURPLE}, 0.5);
+                                              outline: none; }}
+selection, text selection {{ background-color: alpha({PURPLE}, 0.4); color: {FG}; }}
+checkbutton check {{ border: 1px solid {COMMENT}; background: transparent; border-radius: 4px; box-shadow: none; }}
+checkbutton check:checked {{ background: {PURPLE}; border-color: {PURPLE}; color: {BG_DARKER}; }}
 
-popover > contents, popover > arrow {{ background-color: #241243; border: 1px solid alpha({PINK}, 0.7);
-                                       color: {INK}; }}
-calendar {{ background: transparent; color: {INK}; border-color: alpha({PURPLE}, 0.4); }}
-calendar > grid > label.today {{ color: {PINK}; box-shadow: inset 0 -2px {PINK}; }}
-calendar > grid > label:selected {{ background: {PINK}; color: {NIGHT}; }}
-checkbutton check {{ border-color: {PURPLE}; background: alpha(black, 0.2); }}
-checkbutton check:checked {{ background: {PINK}; border-color: {PINK}; color: {NIGHT}; }}
-scrollbar slider {{ background-color: alpha({PINK}, 0.55); }}
-paned > separator {{ background-image: image(alpha({PINK}, 0.45)); }}
-list, listview, textview, textview text {{ background: transparent; color: {INK}; }}
-tooltip, tooltip.background {{ background: #241243; color: {INK}; border: 1px solid {CYAN}; }}
+popover > contents {{ background: {BG_DARK}; color: {FG}; border: 1px solid {BG_DARKER}; border-radius: 10px;
+                      box-shadow: 0 8px 24px alpha(black, 0.45); }}
+popover > arrow {{ background: {BG_DARK}; border: 1px solid {BG_DARKER}; }}
+popover button.flat:hover, popover modelbutton:hover, popover row:hover {{ background: alpha({FG}, 0.07); }}
+tooltip, tooltip.background {{ background: {BG_DARKER}; color: {FG}; border-radius: 6px; border: none; }}
+calendar {{ background: transparent; color: {FG}; border-color: {CURRENT}; }}
+calendar > grid > label.today {{ color: {ACCENT}; box-shadow: inset 0 -2px {ACCENT}; }}
+calendar > grid > label:selected {{ background: {ACCENT}; color: {BG_DARKER}; border-radius: 6px; }}
+scrollbar slider {{ background-color: alpha({FG}, 0.25); }}
+paned > separator {{ background-image: image({BG_DARKER}); }}
+list, listview, textview, textview text {{ background: transparent; color: {FG}; }}
 
-.card {{ background-size: 100% 100%, 100% 100%; box-shadow: 0 0 26px alpha({PINK}, 0.35);
-         border: 1px solid alpha(white, 0.25); }}
-.card.pomodoro {{ background-image: linear-gradient(180deg, transparent 62%, alpha(white, 0.12) 100%),
-                                    linear-gradient(160deg, {PINK}, {PURPLE} 70%, #6b2fd6); }}
-.card.short {{ background-image: linear-gradient(180deg, transparent 62%, alpha(white, 0.12) 100%),
-                                 linear-gradient(160deg, {CYAN}, #4f7cff 60%, {PURPLE}); }}
-.card.long {{ background-image: linear-gradient(180deg, transparent 62%, alpha(white, 0.12) 100%),
-                                linear-gradient(160deg, {PURPLE}, #5a2bb5 60%, #24104d); }}
-.timer {{ font-family: monospace; letter-spacing: 6px;
-          text-shadow: 4px 4px 0 alpha({NIGHT}, 0.45), 0 0 22px alpha(white, 0.55); }}
-.mode-btn {{ letter-spacing: 1px; border: none; }}
-.mode-btn:checked {{ background: alpha({NIGHT}, 0.35); color: white; }}
-.ctl {{ border-radius: 999px; letter-spacing: 2px; }}
-.ctl.start {{ background: {MINT}; color: {NIGHT}; box-shadow: 0 0 12px alpha({MINT}, 0.6); }}
-.ctl.start:hover {{ background: #4dffbf; }}
-.ctl.stop {{ background: {PINK}; color: {NIGHT}; box-shadow: 0 0 12px alpha({PINK}, 0.6); }}
-.ctl.stop:hover {{ background: #ff95da; }}
-.ctl.reset {{ background: alpha({NIGHT}, 0.55); color: white; }}
-.ctl.reset:hover {{ background: alpha({NIGHT}, 0.75); }}
-
-.section-title, .subtasks-head, .sidebar-head, .log-head {{ color: {CYAN}; letter-spacing: 1px; }}
-.view-title {{ color: {PINK}; letter-spacing: 2px; text-shadow: 3px 3px 0 alpha({CYAN}, 0.45); }}
-.group-head label, .column-name {{ color: {CYAN}; }}
-.sidebar, .notes-sidebar {{ background: alpha(black, 0.22); }}
-.board-column {{ background: alpha(black, 0.22); border: 1px solid alpha({PURPLE}, 0.35); }}
-.board-card {{ background: alpha({PURPLE}, 0.10); border-color: alpha({PURPLE}, 0.4); }}
-.board-card:hover {{ border-color: {PINK}; box-shadow: 0 0 10px alpha({PINK}, 0.35); }}
+.card {{ background-color: {BG_DARK}; border: 1px solid {CURRENT}; }}
+.timer {{ font-weight: 800; }}
+.mode-btn, .mode-btn:hover {{ color: alpha({FG}, 0.65); background: transparent; border-radius: 6px; }}
+.mode-btn:hover {{ background: alpha({FG}, 0.06); }}
+.ctl {{ border-radius: 8px; }}
+.ctl.stop, .ctl.stop:hover {{ background: {CURRENT}; color: {FG}; }}
+.ctl.reset, .ctl.reset:hover {{ background: transparent; color: alpha({FG}, 0.7); }}
+.ctl.reset:hover {{ background: alpha({FG}, 0.06); }}
+{MODE_CSS}
+.view-title {{ color: {FG}; }}
+.sidebar, .notes-sidebar {{ background: {BG_DARK}; }}
+.sidebar row:hover:not(:selected), .notes-sidebar row:hover:not(:selected) {{ background: alpha({FG}, 0.05); }}
+.sidebar row:selected, .notes-sidebar row:selected {{ background: alpha({ACCENT}, 0.16); color: #ff9d9d; }}
+.board-column {{ background: {BG_DARK}; }}
+.board-card {{ background: {BG}; border-color: {CURRENT}; }}
+.board-card:hover {{ border-color: {COMMENT}; }}
 .board-card:hover .task-actions {{ opacity: 1; }}
-.task-form {{ border-color: alpha({PINK}, 0.5); background: alpha(black, 0.15); }}
-.cal-day {{ border-color: alpha({PURPLE}, 0.25); }}
+.task-form {{ background: {BG_DARK}; border-color: {CURRENT}; }}
 """

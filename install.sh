@@ -44,8 +44,12 @@ install -Dm755 workstation.py "$LIB/workstation.py"
 install -Dm644 workstation_tasks.py "$LIB/workstation_tasks.py"
 install -Dm644 workstation_notes.py "$LIB/workstation_notes.py"
 install -Dm644 workstation_theme.py "$LIB/workstation_theme.py"
+install -Dm644 workstation_retro.py "$LIB/workstation_retro.py"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$LIB/workstation.py" "$HOME/.local/bin/$SLUG"
+install -Dm644 fonts/VT323-Regular.ttf "$HOME/.local/share/fonts/$SLUG/VT323-Regular.ttf"
+install -Dm644 fonts/OFL.txt "$HOME/.local/share/fonts/$SLUG/OFL.txt"
+fc-cache -f "$HOME/.local/share/fonts/$SLUG" 2>/dev/null || true
 install -Dm644 workstation.svg "$HOME/.local/share/icons/hicolor/scalable/apps/$APP_ID.svg"
 install -Dm644 /dev/stdin "$HOME/.local/share/applications/$APP_ID.desktop" <<DESKTOP
 [Desktop Entry]

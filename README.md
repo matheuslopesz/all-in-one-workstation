@@ -10,6 +10,7 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 
 - **Timer**: modos Pomodoro, Short Break e Long Break, com tempos configuráveis
 - **Meta diária**: contador de pomodoros feitos no dia com barra de progresso
+- **Pomodoros por semana**: gráfico de barras das últimas 8 semanas com os pomodoros concluídos
 - **Time Log**: histórico das sessões (início, fim e o que você fez em cada uma)
 - **Alarme**: 6 sons sintetizados na hora (sem arquivos de áudio) e volume ajustável (Mute, 10%–100%)
 - **Notificações** de desktop quando o tempo acaba e auto start opcional do próximo ciclo
@@ -17,8 +18,9 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 - **Board**: cada projeto pode ser visto em lista ou em board (kanban), com seções como colunas e arrastar e soltar entre elas
 - **Sub-tasks**: tarefas dentro de tarefas, em quantos níveis quiser. Concluir a tarefa conclui as sub-tasks
 - **Copiar para o Claude**: o botão 🤖 de uma tarefa copia ela e todas as sub-tasks como um plano de implementação pronto para colar no Claude
-- **Tema vaporwave**: neon rosa, ciano e roxo sobre fundo noturno, inclusive no timer da barra superior
-- **Notes**: notas em Markdown salvas em `~/Documentos/Workstation Notes`
+- **Tema Dracula**: visual no estilo do Todoist com as cores do Dracula, inclusive no timer da barra superior
+- **Tema PC anos 2000** (opcional, em Options → Theme): visual de Windows 98 vaporwave, com botões 3D, fonte pixelada VT323, timer num monitor CRT, tela de boot de BIOS e cliques e bipes retrô
+- **Notes**: editor de texto visual com barra de ferramentas (títulos, negrito, itálico, sublinhado, riscado, destaque, código, listas e checklist), sem precisar escrever Markdown. Por baixo, cada nota é salva como `.md` em `~/Documentos/Workstation Notes`
 - **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
 ## Atalhos
@@ -30,6 +32,7 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 | `Alt+S` | Short Break  |
 | `Alt+L` | Long Break   |
 | `Alt+R` | Reset        |
+| `Alt+1` `Alt+2` `Alt+3` | Abas Timer, Tasks e Notes |
 
 ## Requisitos
 
@@ -62,7 +65,9 @@ Para remover: `./uninstall.sh`
 workstation.py           janela principal, timer, sons e opções
 workstation_tasks.py     aba Tasks
 workstation_notes.py     aba Notes
-workstation_theme.py     paleta e CSS do tema vaporwave
+workstation_theme.py     paleta e CSS do tema Dracula
+workstation_retro.py     tema opcional PC anos 2000 (CSS, tela de boot, scanlines)
+fonts/                   fonte pixelada VT323 (licença OFL)
 panel-extension/         extensão do GNOME Shell (barra superior)
 install.sh/uninstall.sh  instalação local em ~/.local
 ```

@@ -3,12 +3,13 @@ import array
 import json
 import math
 import os
+import random
 import shutil
 import subprocess
 import sys
 import time
 import wave
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import gi
 
@@ -16,11 +17,12 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gsk", "4.0")
 gi.require_version("Graphene", "1.0")
-from gi.repository import Gdk, GLib, Graphene, Gsk, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk  # noqa: E402
 
 from workstation_notes import NOTES_CSS, NotesView  # noqa: E402
 from workstation_tasks import TASKS_CSS, TasksView  # noqa: E402
-from workstation_theme import PINK, THEME_CSS  # noqa: E402
+from workstation_retro import BLACK, PINK, RETRO_CSS, SILVER_LO, BootScreen, Scanlines  # noqa: E402
+from workstation_theme import ACCENT, THEME_CSS  # noqa: E402
 
 APP_ID = "dev.matheus.AllInOneWorkstation"
 APP_NAME = "All-in-One Workstation"
@@ -31,6 +33,7 @@ PANEL_FILE = os.path.join(GLib.get_user_runtime_dir(), "all-in-one-workstation",
 
 MODES = {"pomodoro": "Pomodoro", "short": "Short Break", "long": "Long Break"}
 SOUNDS = ["80s Alarm", "Alarm Clock", "Wristwatch Alarm", "Elevator Ding", "Ding", "Door Bell"]
+THEMES = {"dracula": ("Dracula", THEME_CSS), "retro": ("PC anos 2000", RETRO_CSS)}
 VOLUMES = [("Mute", 0), ("10%", 10), ("25%", 25), ("50%", 50), ("75%", 75), ("100%", 100)]
 LONG_BREAK_EVERY = 4
 
@@ -39,35 +42,31 @@ DEFAULTS = {
     "title_indicator": True,
     "notifications": True,
     "auto_start": False,
+    "theme": "dracula",
+    "boot_screen": True,
+    "retro_sounds": True,
     "goal": 8,
     "sound": "80s Alarm",
     "volume": 50,
     "done_today": 0,
     "done_date": "",
     "log": [],
+    "history": {},
 }
+CHART_WEEKS = 8
 
 CSS = """
-.card { border-radius: 14px; padding: 28px 24px; transition: background-color 400ms; }
-.card.pomodoro { background-color: #d9534f; }
-.card.short { background-color: #4c9195; }
-.card.long { background-color: #457ca3; }
-.card, .card label { color: white; }
-.mode-btn { background: transparent; color: white; border: none; box-shadow: none; font-weight: bold; padding: 4px 14px; }
-.mode-btn:hover { background: rgba(255,255,255,0.12); }
-.mode-btn:checked { background: rgba(0,0,0,0.18); }
+.card { border-radius: 14px; padding: 28px 24px; }
+.mode-btn { font-weight: bold; padding: 4px 14px; }
 .timer { font-size: 112px; font-weight: 800; font-feature-settings: "tnum"; }
-.ctl { font-weight: bold; font-size: 15px; padding: 8px 26px; color: white; border: none; box-shadow: none; }
-.ctl.start { background: #5cb85c; }
-.ctl.start:hover { background: #4cae4c; }
-.ctl.stop { background: #c9302c; }
-.ctl.stop:hover { background: #ac2925; }
-.ctl.reset { background: #6c757d; }
-.ctl.reset:hover { background: #5a6268; }
+.ctl { font-weight: bold; font-size: 15px; padding: 8px 26px; }
 .ctl:disabled { opacity: 0.45; }
 .section-title { font-weight: bold; font-size: 15px; }
 .log-head { font-weight: bold; opacity: 0.7; }
 .hint { opacity: 0.6; font-size: 12px; }
+.week-count { font-size: 12px; font-weight: bold; font-feature-settings: "tnum"; }
+.week-label { font-size: 11px; opacity: 0.6; }
+.week-label.current { opacity: 1; font-weight: bold; }
 """
 
 
@@ -79,9 +78,43 @@ class Store:
                 saved = json.load(f)
             self.data.update(saved)
             self.data["times"] = {**DEFAULTS["times"], **saved.get("times", {})}
+            if "history" not in saved:
+                self.data["history"] = self.history_from_log()
         except (OSError, ValueError):
             pass
         self.roll_day()
+
+    def history_from_log(self):
+        """Rebuild daily pomodoro counts from the time log for states saved before history existed."""
+        history = {}
+        full = self.data["times"]["pomodoro"] * 60 - 5
+        for entry in self.data["log"]:
+            if entry["session"] != MODES["pomodoro"] or not entry.get("date") or not entry["end"]:
+                continue
+            start, end = (datetime.strptime(entry[k], "%H:%M:%S") for k in ("start", "end"))
+            if (end - start).total_seconds() % 86400 >= full:
+                history[entry["date"]] = history.get(entry["date"], 0) + 1
+        if self.data["done_date"] == date.today().isoformat():
+            history[self.data["done_date"]] = max(history.get(self.data["done_date"], 0), self.data["done_today"])
+        return history
+
+    def set_done_today(self, count):
+        self.roll_day()
+        self.data["done_today"] = count
+        self.data["history"][self.data["done_date"]] = count
+        self.save()
+
+    def weekly_counts(self, weeks):
+        """Completed pomodoros per week (Monday first), oldest first, ending with the current week."""
+        monday = date.today() - timedelta(days=date.today().weekday())
+        starts = [monday - timedelta(weeks=i) for i in reversed(range(weeks))]
+        counts = dict.fromkeys(starts, 0)
+        for day, count in self.data["history"].items():
+            d = date.fromisoformat(day)
+            start = d - timedelta(days=d.weekday())
+            if start in counts:
+                counts[start] += count
+        return list(counts.items())
 
     def __getitem__(self, key):
         return self.data[key]
@@ -105,21 +138,36 @@ class Store:
 
     def add_done(self):
         self.roll_day()
-        self.data["done_today"] += 1
-        self.save()
+        self.set_done_today(self.data["done_today"] + 1)
 
 
 class Sounds:
     RATE = 44100
     MASTER_GAIN = 0.3
+    RETRO_LEVELS = {"Click": 0.35, "Beep High": 0.25, "Beep Low": 0.25, "POST Beep": 0.3}
 
-    def path_for(self, name, volume):
+    def __init__(self):
+        self.media = {}
+
+    def path_for(self, name, volume, level=1.0):
         os.makedirs(CACHE_DIR, exist_ok=True)
         slug = name.lower().replace(" ", "-")
-        path = os.path.join(CACHE_DIR, f"{slug}-{volume}-g{self.MASTER_GAIN}.wav")
+        suffix = f"-l{level}" if level != 1.0 else ""
+        path = os.path.join(CACHE_DIR, f"{slug}-{volume}-g{self.MASTER_GAIN}{suffix}.wav")
         if not os.path.exists(path):
-            self.write_wav(path, self.render(name), volume)
+            self.write_wav(path, self.render(name), volume, level)
         return path
+
+    def blip(self, name, volume):
+        if volume <= 0:
+            return
+        path = self.path_for(name, volume, self.RETRO_LEVELS[name])
+        media = self.media.get(path)
+        if media is None:
+            media = self.media[path] = Gtk.MediaFile.new_for_filename(path)
+        elif media.get_ended() or media.get_playing():
+            media.seek(0)
+        media.play()
 
     def play(self, name, volume):
         if volume <= 0:
@@ -131,9 +179,9 @@ class Sounds:
                 return
         Gdk.Display.get_default().beep()
 
-    def write_wav(self, path, samples, volume):
+    def write_wav(self, path, samples, volume, level=1.0):
         peak = max((abs(s) for s in samples), default=1.0) or 1.0
-        gain = self.MASTER_GAIN * (volume / 100) ** 2 * 32767 / peak
+        gain = self.MASTER_GAIN * level * (volume / 100) ** 2 * 32767 / peak
         pcm = array.array("h", (int(s * gain) for s in samples))
         with wave.open(path, "wb") as w:
             w.setnchannels(1)
@@ -159,6 +207,14 @@ class Sounds:
             return self.bell(1568, 1.4, decay=3.5)
         if name == "Door Bell":
             return self.bell(659.3, 0.75, decay=2.2) + self.bell(523.3, 2.0, decay=1.6)
+        if name == "Click":
+            return self.click()
+        if name == "Beep High":
+            return self.tone(1046.5, 0.07, square=True)
+        if name == "Beep Low":
+            return self.tone(523.3, 0.07, square=True)
+        if name == "POST Beep":
+            return self.tone(1000, 0.22, square=True)
         return self.bell(1046.5, 1.5)
 
     def silence(self, dur):
@@ -173,6 +229,16 @@ class Sounds:
             if square:
                 v = 0.6 if v >= 0 else -0.6
             out.append(v * min(1.0, i / edge, (n - i) / edge))
+        return out
+
+    def click(self):
+        rng = random.Random(98)
+        out = []
+        for i in range(int(self.RATE * 0.025)):
+            t = i / self.RATE
+            out.append(rng.uniform(-1, 1) * math.exp(-t / 0.0025)
+                       + 0.8 * math.sin(2 * math.pi * 2600 * t) * math.exp(-t / 0.004)
+                       + 0.6 * math.sin(2 * math.pi * 140 * t) * math.exp(-t / 0.008))
         return out
 
     def bell(self, freq, dur, decay=3.0):
@@ -194,15 +260,26 @@ class Sounds:
 
 
 class GoalBar(Gtk.Widget):
+    BLOCK, GAP, PAD = 10, 2, 3
+
     def __init__(self):
         super().__init__(height_request=8)
         self.fraction = 0.0
+        self.retro = False
 
     def set_fraction(self, fraction):
         self.fraction = fraction
         self.queue_draw()
 
+    def set_retro(self, retro):
+        self.retro = retro
+        self.set_size_request(-1, 20 if retro else 8)
+        self.queue_draw()
+
     def do_snapshot(self, snapshot):
+        if self.retro:
+            self.snapshot_blocks(snapshot)
+            return
         width, height = self.get_width(), self.get_height()
         bounds = Graphene.Rect().init(0, 0, width, height)
         clip = Gsk.RoundedRect()
@@ -211,11 +288,88 @@ class GoalBar(Gtk.Widget):
         track = Gdk.RGBA()
         track.red, track.green, track.blue, track.alpha = fg.red, fg.green, fg.blue, 0.1
         fill = Gdk.RGBA()
-        fill.parse(PINK)
+        fill.parse(ACCENT)
         snapshot.push_rounded_clip(clip)
         snapshot.append_color(track, bounds)
         snapshot.append_color(fill, Graphene.Rect().init(0, 0, width * self.fraction, height))
         snapshot.pop()
+
+    def snapshot_blocks(self, snapshot):
+        width, height = self.get_width(), self.get_height()
+
+        def rect(color, x, y, w, h):
+            rgba = Gdk.RGBA()
+            rgba.parse(color)
+            snapshot.append_color(rgba, Graphene.Rect().init(x, y, w, h))
+
+        rect("#ffffff", 0, 0, width, height)
+        rect(SILVER_LO, 0, 0, width - 1, height - 1)
+        rect(BLACK, 1, 1, width - 2, height - 2)
+        step = self.BLOCK + self.GAP
+        blocks = round((width - 2 * self.PAD + self.GAP) // step * self.fraction)
+        for i in range(blocks):
+            rect(PINK, self.PAD + i * step, self.PAD, self.BLOCK, height - 2 * self.PAD)
+
+
+class WeekBar(Gtk.Widget):
+    def __init__(self):
+        super().__init__(vexpand=True, width_request=26)
+        self.fraction = 0.0
+        self.retro = False
+
+    def do_snapshot(self, snapshot):
+        width, height = self.get_width(), self.get_height()
+        bar = max(2.0, height * self.fraction) if self.fraction else 0.0
+        rgba = Gdk.RGBA()
+        rgba.parse(PINK if self.retro else ACCENT)
+        if self.retro:
+            snapshot.append_color(rgba, Graphene.Rect().init(0, height - bar, width, bar))
+            return
+        rounded = Gsk.RoundedRect()
+        top = Graphene.Size().init(min(4, bar), min(4, bar))
+        rounded.init(Graphene.Rect().init(0, height - bar, width, bar), top, top,
+                     Graphene.Size().init(0, 0), Graphene.Size().init(0, 0))
+        snapshot.push_rounded_clip(rounded)
+        snapshot.append_color(rgba, rounded.bounds)
+        snapshot.pop()
+
+
+class WeekChart(Gtk.Box):
+    """Bar chart of completed pomodoros per week."""
+
+    def __init__(self):
+        super().__init__(spacing=10, homogeneous=True, height_request=150)
+        self.columns = []
+        for _ in range(CHART_WEEKS):
+            column = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+            count = Gtk.Label(css_classes=["week-count"])
+            bar = WeekBar()
+            bar.set_halign(Gtk.Align.CENTER)
+            label = Gtk.Label(css_classes=["week-label"])
+            for widget in (count, bar, label):
+                column.append(widget)
+            self.append(column)
+            self.columns.append((column, count, bar, label))
+
+    def set_retro(self, retro):
+        for *_rest, bar, _label in self.columns:
+            bar.retro = retro
+            bar.queue_draw()
+
+    def update(self, weeks):
+        peak = max((count for _start, count in weeks), default=0)
+        for (column, count_label, bar, label), (start, count) in zip(self.columns, weeks):
+            current = start == weeks[-1][0]
+            count_label.set_text(str(count) if count else "")
+            bar.fraction = count / peak if peak else 0.0
+            bar.queue_draw()
+            label.set_text("This week" if current else start.strftime("%d/%m"))
+            if current:
+                label.add_css_class("current")
+            else:
+                label.remove_css_class("current")
+            end = start + timedelta(days=6)
+            column.set_tooltip_text(f"{start:%d/%m} – {end:%d/%m}: {count} pomodoro{'s' if count != 1 else ''}")
 
 
 class OptionsWindow(Gtk.Window):
@@ -248,6 +402,15 @@ class OptionsWindow(Gtk.Window):
             grid.attach(Gtk.Label(label=text, xalign=0, hexpand=True), 0, row, 1, 1)
             grid.attach(widget, 1, row, 1, 1)
             row += 1
+
+        title("Appearance")
+        theme_keys = list(THEMES)
+        theme = Gtk.DropDown.new_from_strings([label for label, _css in THEMES.values()])
+        theme.set_selected(theme_keys.index(self.store["theme"]) if self.store["theme"] in THEMES else 0)
+        theme.connect("notify::selected", lambda d, _p: self.pick_theme(theme_keys[d.get_selected()]))
+        labeled("Theme", theme)
+        toggle("PC anos 2000: boot screen on startup?", "boot_screen")
+        toggle("PC anos 2000: retro click sounds?", "retro_sounds")
 
         title("User preferences")
         toggle("Timer indication in title?", "title_indicator")
@@ -299,6 +462,10 @@ class OptionsWindow(Gtk.Window):
         self.store[key] = value
         self.main.refresh()
 
+    def pick_theme(self, key):
+        self.store["theme"] = key
+        self.main.apply_theme()
+
     def pick_sound(self, name):
         self.store["sound"] = name
         self.main.sounds.play(name, self.store["volume"])
@@ -332,7 +499,13 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.set_default_size(960, 760)
 
         header = Gtk.HeaderBar()
-        options = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Options")
+        self.retro_icon = Gtk.Image(icon_name=APP_ID, pixel_size=18)
+        self.retro_title = Gtk.Label(css_classes=["titlebar-label"])
+        self.bind_property("title", self.retro_title, "label", GObject.BindingFlags.SYNC_CREATE)
+        header.pack_start(self.retro_icon)
+        header.pack_start(self.retro_title)
+        options = Gtk.Button(icon_name="emblem-system-symbolic", tooltip_text="Options",
+                             css_classes=["flat", "titlebar-btn"])
         options.connect("clicked", lambda _b: OptionsWindow(self).present())
         header.pack_end(options)
         self.set_titlebar(header)
@@ -343,29 +516,112 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
         scroller.set_child(root)
 
-        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE)
+        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, hexpand=True, vexpand=True)
         self.stack.add_titled(scroller, "timer", "Timer")
-        self.stack.add_titled(TasksView(self.focus_on_task), "tasks", "Tasks")
+        self.tasks = TasksView(self.focus_on_task)
+        self.stack.add_titled(self.tasks, "tasks", "Tasks")
         self.notes = NotesView()
         self.stack.add_titled(self.notes, "notes", "Notes")
         self.connect("close-request", self.on_close)
-        header.set_title_widget(Gtk.StackSwitcher(stack=self.stack))
-        self.set_child(self.stack)
+
+        self.header_tabs = Gtk.StackSwitcher(stack=self.stack)
+        header.set_title_widget(self.header_tabs)
+        self.tabstrip = Gtk.Box(css_classes=["tabstrip"])
+        self.tabstrip.append(Gtk.StackSwitcher(stack=self.stack))
+        well = Gtk.Box(css_classes=["well"])
+        well.append(self.stack)
+        self.statusbar = self.build_statusbar()
+        desktop = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["chrome"])
+        desktop.append(self.tabstrip)
+        desktop.append(well)
+        desktop.append(self.statusbar)
+        self.overlay = Gtk.Overlay(child=desktop)
+        self.set_child(self.overlay)
 
         root.append(self.build_card())
         root.append(self.build_goal())
+        root.append(self.build_chart())
         root.append(self.build_log())
         root.append(Gtk.Label(
             label="SPACE  Start / Stop     ALT+P  Pomodoro     ALT+S  Short Break     "
-                  "ALT+L  Long Break     ALT+R  Reset",
+                  "ALT+L  Long Break     ALT+R  Reset     ALT+1/2/3  Tabs",
             css_classes=["hint"], wrap=True, justify=Gtk.Justification.CENTER))
 
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self.on_key)
         self.add_controller(keys)
+        presses = Gtk.GestureClick(propagation_phase=Gtk.PropagationPhase.CAPTURE)
+        presses.connect("pressed", self.on_any_press)
+        self.add_controller(presses)
+        GObject.type_class_ref(Gtk.Button)
+        GObject.add_emission_hook(Gtk.Button, "clicked", self.on_any_click)
 
         self.refresh()
         self.rebuild_log()
+        self.apply_theme()
+        self.boot = None
+        if self.is_retro() and self.store["boot_screen"]:
+            self.start_boot()
+
+    def is_retro(self):
+        return self.store["theme"] == "retro"
+
+    def apply_theme(self):
+        retro = self.is_retro()
+        self.get_application().load_theme(self.store["theme"])
+        for widget in (self.retro_icon, self.retro_title, self.tabstrip, self.statusbar, self.scanlines):
+            widget.set_visible(retro)
+        self.header_tabs.set_visible(not retro)
+        self.goal_bar.set_retro(retro)
+        self.week_chart.set_retro(retro)
+
+    def build_statusbar(self):
+        bar = Gtk.Box(spacing=4, css_classes=["statusbar"])
+        self.status_label = Gtk.Label(xalign=0, hexpand=True, css_classes=["panel"])
+        self.status_goal = Gtk.Label(css_classes=["panel"])
+        self.status_clock = Gtk.Label(css_classes=["panel"])
+        for label in (self.status_label, self.status_goal, self.status_clock):
+            bar.append(label)
+        self.tick_clock()
+        GLib.timeout_add_seconds(5, self.tick_clock)
+        return bar
+
+    def tick_clock(self):
+        self.status_clock.set_text(datetime.now().strftime("%H:%M"))
+        return True
+
+    def start_boot(self):
+        open_tasks = sum(1 for t in self.tasks.store.tasks if not t["done"])
+        checks = [("Detecting Pomodoro timer", f"{self.store['times']['pomodoro']} MIN"),
+                  ("Loading tasks", f"{open_tasks} OPEN"),
+                  ("Mounting notes", f"{len(self.notes.store.titles())} FILES")]
+        revealer = Gtk.Revealer(transition_type=Gtk.RevealerTransitionType.CROSSFADE,
+                                transition_duration=350, reveal_child=True)
+        self.boot = BootScreen(APP_ID, checks, lambda: self.end_boot(revealer))
+        revealer.set_child(self.boot)
+        self.overlay.add_overlay(revealer)
+        self.retro("POST Beep")
+
+    def end_boot(self, revealer):
+        self.boot = None
+        revealer.connect("notify::child-revealed", lambda r, _p: self.overlay.remove_overlay(r))
+        revealer.set_reveal_child(False)
+
+    def retro(self, name):
+        if self.is_retro() and self.store["retro_sounds"]:
+            self.sounds.blip(name, self.store["volume"])
+
+    def on_any_click(self, *_args):
+        self.retro("Click")
+        return True
+
+    def on_any_press(self, gesture, _n_press, x, y):
+        widget = self.pick(x, y, Gtk.PickFlags.DEFAULT)
+        while widget and not isinstance(widget, (Gtk.Button, Gtk.CheckButton, Gtk.ListBoxRow)):
+            widget = widget.get_parent()
+        if isinstance(widget, (Gtk.CheckButton, Gtk.ListBoxRow)):
+            self.retro("Click")
+        gesture.set_state(Gtk.EventSequenceState.DENIED)
 
     def build_card(self):
         self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, css_classes=["card"])
@@ -397,7 +653,10 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         for button in (self.start_button, self.stop_button, reset_button):
             controls.append(button)
         self.card.append(controls)
-        return self.card
+        screen = Gtk.Overlay(child=self.card)
+        self.scanlines = Scanlines()
+        screen.add_overlay(self.scanlines)
+        return screen
 
     def build_goal(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -410,6 +669,13 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.goal_bar = GoalBar()
         box.append(top)
         box.append(self.goal_bar)
+        return box
+
+    def build_chart(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.append(Gtk.Label(label="Pomodoros per week", xalign=0, css_classes=["section-title"]))
+        self.week_chart = WeekChart()
+        box.append(self.week_chart)
         return box
 
     def build_log(self):
@@ -447,6 +713,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         if self.open_entry is None:
             self.begin_entry()
         self.running = True
+        self.retro("Beep High")
         self.end_at = time.monotonic() + self.remaining
         self.tick_id = GLib.timeout_add(200, self.tick)
         self.refresh()
@@ -456,6 +723,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
             return
         self.remaining = max(0.0, self.end_at - time.monotonic())
         self.halt()
+        self.retro("Beep Low")
         self.refresh()
 
     def halt(self):
@@ -534,7 +802,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.rebuild_log()
 
     def clear_done(self, _button):
-        self.store["done_today"] = 0
+        self.store.set_done_today(0)
         self.refresh()
 
     def clear_log(self, _button):
@@ -567,6 +835,14 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         seconds = math.ceil(self.remaining)
         clock = f"{seconds // 60:02d}:{seconds % 60:02d}"
         self.time_label.set_text(clock)
+        if self.running:
+            self.status_label.set_text(f"Running: {MODES[self.mode]}")
+        elif self.remaining <= 0:
+            self.status_label.set_text("Time's up!")
+        elif self.remaining < self.duration():
+            self.status_label.set_text(f"Paused: {MODES[self.mode]}")
+        else:
+            self.status_label.set_text("Ready")
         if self.store["title_indicator"] and (self.running or 0 < self.remaining < self.duration()):
             self.set_title(f"({clock}) {APP_NAME}")
         elif self.store["title_indicator"] and self.remaining <= 0:
@@ -582,7 +858,9 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.store.roll_day()
         done, goal = self.store["done_today"], self.store["goal"]
         self.goal_label.set_text(f"Pomodoro goal tracker: {done} / {goal}")
+        self.status_goal.set_text(f"Pomodoros {done}/{goal}")
         self.goal_bar.set_fraction(min(1.0, done / goal) if goal else 0.0)
+        self.week_chart.update(self.store.weekly_counts(CHART_WEEKS))
         self.publish_panel()
 
     def publish_panel(self):
@@ -616,6 +894,13 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.rebuild_log()
 
     def on_key(self, _controller, keyval, _keycode, state):
+        if self.boot:
+            self.boot.finish()
+            return True
+        tabs = {Gdk.KEY_1: "timer", Gdk.KEY_2: "tasks", Gdk.KEY_3: "notes"}
+        if state & Gdk.ModifierType.ALT_MASK and keyval in tabs:
+            self.stack.set_visible_child_name(tabs[keyval])
+            return True
         if self.stack.get_visible_child_name() != "timer":
             return False
         if state & Gdk.ModifierType.ALT_MASK:
@@ -644,10 +929,14 @@ class WorkstationApp(Gtk.Application):
         GLib.set_application_name(APP_NAME)
         Gtk.Settings.get_default().props.gtk_application_prefer_dark_theme = True
         Gtk.Window.set_default_icon_name(APP_ID)
-        provider = Gtk.CssProvider()
-        provider.load_from_string(CSS + TASKS_CSS + NOTES_CSS + THEME_CSS)
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider,
+        self.provider = Gtk.CssProvider()
+        self.load_theme("dracula")
+        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def load_theme(self, name):
+        _label, theme_css = THEMES.get(name, THEMES["dracula"])
+        self.provider.load_from_string(CSS + TASKS_CSS + NOTES_CSS + theme_css)
 
     def do_activate(self):
         window = self.get_active_window() or WorkstationWindow(self)
