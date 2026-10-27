@@ -21,6 +21,8 @@ MODE_CSS = "".join(
     f".card.{mode} .timer {{ color: {color}; }}\n"
     f".card.{mode} .mode-btn:checked {{ background: alpha({color}, 0.22); color: {color}; }}\n"
     f".card.{mode} .ctl.start, .card.{mode} .ctl.start:hover {{ background: {color}; color: {BG_DARKER}; }}\n"
+    f".log-dot.{mode} {{ background: {color}; }}\n"
+    f".log-kind.{mode} {{ color: {color}; }}\n"
     for mode, color in MODE_COLORS.items())
 
 THEME_CSS = f"""
@@ -80,4 +82,9 @@ list, listview, textview, textview text {{ background: transparent; color: {FG};
 .board-card:hover {{ border-color: {COMMENT}; }}
 .board-card:hover .task-actions {{ opacity: 1; }}
 .task-form {{ background: {BG_DARK}; border-color: {CURRENT}; }}
+.log-day {{ border-bottom: 1px solid alpha({FG}, 0.08); }}
+.log-row:hover {{ background: alpha({FG}, 0.03); }}
+entry.log-desc {{ background: transparent; border-color: transparent; }}
+entry.log-desc:hover {{ background: alpha({FG}, 0.04); }}
+entry.log-desc:focus-within {{ background: {BG_DARK}; border-color: {PURPLE}; }}
 """

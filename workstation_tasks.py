@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import uuid
 from calendar import monthrange
 from datetime import date, datetime, timedelta
@@ -11,11 +10,10 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
 
-from workstation_theme import ACCENT, BG_DARKER, COMMENT, CYAN, GREEN, ORANGE, PURPLE, RED  # noqa: E402
+from workstation_theme import ACCENT, BG_DARKER, GREEN, ORANGE, PURPLE, RED  # noqa: E402
 
 TASKS_FILE = os.path.join(GLib.get_user_config_dir(), "all-in-one-workstation", "tasks.json")
 INBOX = "inbox"
-PRIORITY_COLORS = {1: RED, 2: ORANGE, 3: CYAN, 4: COMMENT}
 PROJECT_COLORS = ["#db4035", "#ff9933", "#fad000", "#7ecc49", "#299438",
                   "#14aaf5", "#4073ff", "#884dff", "#e05194", "#808080"]
 DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
@@ -79,12 +77,21 @@ row:hover .task-actions {{ opacity: 1; }}
 .board-card {{ border: 1px solid alpha(currentColor, 0.12); border-radius: 8px; padding: 8px;
               background: alpha(currentColor, 0.03); }}
 .board-card:hover {{ border-color: alpha(currentColor, 0.3); }}
+.board-card.drop-before {{ box-shadow: 0 -5px 0 -2px {ACCENT}; }}
+.board-card.drop-after {{ box-shadow: 0 5px 0 -2px {ACCENT}; }}
 .subtasks-head {{ font-weight: bold; font-size: 13px; }}
-""" + "".join(
-    f".task-check.p{p} check {{ border-color: {c}; background: alpha({c}, 0.12); }}\n"
-    f".task-check.p{p} check:checked {{ background: {c}; color: {BG_DARKER}; }}\n"
-    for p, c in PRIORITY_COLORS.items()
-)
+label.card-subtask {{ font-size: 12px; }}
+.card-subtask check {{ min-width: 14px; min-height: 14px; }}
+.task-check.priority check {{ border-color: {RED}; background: alpha({RED}, 0.12); }}
+.task-check.priority check:checked {{ background: {RED}; color: {BG_DARKER}; }}
+.board-card.priority {{ background-image: linear-gradient(160deg, alpha({RED}, 0.20), alpha({RED}, 0.05));
+                       border-color: alpha({RED}, 0.35); }}
+.task-list row.priority {{ background-image: linear-gradient(160deg, alpha({RED}, 0.16), alpha({RED}, 0.03)); }}
+.cal-task.priority {{ background: alpha({RED}, 0.18); }}
+.task-list row.drop-before {{ box-shadow: inset 0 3px 0 0 {ACCENT}; }}
+.task-list row.drop-after {{ box-shadow: inset 0 -3px 0 0 {ACCENT}; }}
+.priority-toggle:checked {{ background: alpha({RED}, 0.22); color: {RED}; }}
+"""
 
 
 def due_of(task):
@@ -119,6 +126,10 @@ def day_heading(d):
     return text
 
 
+def check_classes(task, *extra):
+    return ["task-check", *extra, *(["priority"] if task["priority"] else [])]
+
+
 def title_markup(task):
     escaped = GLib.markup_escape_text(task["title"])
     return f'<span strikethrough="true" alpha="50%">{escaped}</span>' if task["done"] else escaped
@@ -136,7 +147,9 @@ def plan_steps(store, task, depth=0):
 
 
 def claude_prompt(store, task):
-    details = [f"Projeto: {store.project(task['project'])['name']}", f"Prioridade: P{task['priority']}"]
+    details = [f"Projeto: {store.project(task['project'])['name']}"]
+    if task["priority"]:
+        details.append("Prioridade: alta")
     if task["due"]:
         details.append(f"Prazo: {task['due']}")
     parts = [
@@ -174,8 +187,8 @@ def parse_quick(text, projects):
             due = today + timedelta(days=1)
         elif word in WEEKDAY_WORDS:
             due = today + timedelta(days=(WEEKDAY_WORDS[word] - today.weekday() - 1) % 7 + 1)
-        elif re.fullmatch(r"p[1-4]", word):
-            priority = int(word[1])
+        elif word in ("!", "p1"):
+            priority = True
         elif word.startswith("#") and len(word) > 1:
             match = next((p for p in projects if p["name"].lower().replace(" ", "") == word[1:]), None)
             if match:
@@ -195,6 +208,9 @@ class TaskStore:
                 self.data.update(json.load(f))
         except (OSError, ValueError):
             pass
+        for task in self.tasks:
+            if not isinstance(task["priority"], bool):
+                task["priority"] = task["priority"] == 1
 
     @property
     def projects(self):
@@ -214,7 +230,7 @@ class TaskStore:
     def project(self, project_id):
         return next((p for p in self.projects if p["id"] == project_id), self.projects[0])
 
-    def add_task(self, title, description="", due=None, priority=4, project=INBOX, section=None, parent=None):
+    def add_task(self, title, description="", due=None, priority=False, project=INBOX, section=None, parent=None):
         parent_task = self.find_task(parent)
         if parent_task:
             project, section = parent_task["project"], None
@@ -242,6 +258,10 @@ class TaskStore:
                 child["project"] = project
         task.update(title=title, description=description, due=due.isoformat() if due else None,
                     priority=priority, project=project)
+        self.save()
+
+    def set_priority(self, task, priority):
+        task["priority"] = priority
         self.save()
 
     def set_done(self, task, done):
@@ -288,13 +308,23 @@ class TaskStore:
                 t["section"] = None
         self.save()
 
-    def move_to_section(self, task, section_id):
+    def move_to_section(self, task, section_id, before=None):
+        """Move a task into a section; it lands just before `before`, or at the end of the section."""
         task["section"] = section_id
+        if before is not task:
+            self.tasks.remove(task)
+            self.tasks.insert(self.tasks.index(before) if before else len(self.tasks), task)
         self.save()
 
     def set_layout(self, project, layout):
         project["layout"] = layout
         self.save()
+
+    def next_in_section(self, task, skip):
+        siblings = [t for t in self.tasks if t is not skip and t["project"] == task["project"]
+                    and t.get("section") == task.get("section") and self.is_root(t)]
+        index = siblings.index(task) + 1
+        return siblings[index] if index < len(siblings) else None
 
     def section_tasks(self, project_id, section_id, show_done):
         selected = (t for t in self.tasks if t["project"] == project_id and t.get("section") == section_id
@@ -311,7 +341,7 @@ class TaskStore:
     def tasks_on(self, day, show_done):
         iso = day.isoformat()
         selected = (t for t in self.tasks if t["due"] == iso and (show_done or not t["done"]))
-        return sorted(selected, key=lambda t: (t["done"], t["priority"]))
+        return sorted(selected, key=lambda t: t["done"])
 
     def delete_task(self, task):
         doomed = {t["id"] for t in [task, *self.descendants(task)]}
@@ -350,7 +380,7 @@ class TaskStore:
         today = date.today()
         selected = [t for t in self.tasks if self.matches(view, t) and (view[0] != "project" or self.is_root(t))]
         pending = [t for t in selected if not t["done"]]
-        by_due = sorted(pending, key=lambda t: (t["due"] or "9999-12-31", t["priority"]))
+        by_due = sorted(pending, key=lambda t: (not t["priority"], t["due"] or "9999-12-31"))
         groups = []
         if view[0] == "project":
             for section in [None, *self.sections(self.project(view[1]))]:
@@ -385,7 +415,7 @@ class TaskForm(Gtk.Box):
         self.on_submit = on_submit
         self.due = None
 
-        self.title = Gtk.Entry(placeholder_text="Task name   e.g. Pay rent tomorrow p1 #Home",
+        self.title = Gtk.Entry(placeholder_text="Task name   e.g. Pay rent tomorrow ! #Home",
                                css_classes=["title-entry"])
         self.description = Gtk.Entry(placeholder_text="Description")
         for entry in (self.title, self.description):
@@ -395,7 +425,7 @@ class TaskForm(Gtk.Box):
 
         chips = Gtk.Box(spacing=6)
         self.due_button = Gtk.MenuButton(popover=self.build_due_popover())
-        self.priority = Gtk.DropDown.new_from_strings([f"Priority {p}" for p in PRIORITY_COLORS])
+        self.priority = Gtk.ToggleButton(label="🔥 Urgent", css_classes=["priority-toggle"])
         self.project = Gtk.DropDown()
         chips.append(self.due_button)
         chips.append(self.priority)
@@ -445,11 +475,11 @@ class TaskForm(Gtk.Box):
         self.due_button.set_label(due_label(value)[0] if value else "Due date")
         self.popover.popdown()
 
-    def set_values(self, title="", description="", due=None, priority=4, project=INBOX):
+    def set_values(self, title="", description="", due=None, priority=False, project=INBOX):
         self.title.set_text(title)
         self.description.set_text(description)
         self.set_due(due)
-        self.priority.set_selected(priority - 1)
+        self.priority.set_active(priority)
         self.project_ids = [p["id"] for p in self.store.projects]
         self.project.set_model(Gtk.StringList.new([p["name"] for p in self.store.projects]))
         self.project.set_selected(self.project_ids.index(project) if project in self.project_ids else 0)
@@ -464,7 +494,7 @@ class TaskForm(Gtk.Box):
             "title": title or text,
             "description": self.description.get_text().strip(),
             "due": due or self.due,
-            "priority": priority or self.priority.get_selected() + 1,
+            "priority": priority or self.priority.get_active(),
             "project": project or self.project_ids[self.project.get_selected()],
         })
 
@@ -506,7 +536,7 @@ class TaskDialog(Gtk.Window):
         self.subtasks.append(head)
         for child in children:
             row = Gtk.Box(spacing=8)
-            check = Gtk.CheckButton(active=child["done"], css_classes=["task-check", f"p{child['priority']}"])
+            check = Gtk.CheckButton(active=child["done"], css_classes=check_classes(child))
             check.connect("toggled", self.on_check, child)
             row.append(check)
             title = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
@@ -611,6 +641,12 @@ class TasksView(Gtk.Paned):
 
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["task-list"])
         self.list.connect("row-activated", self.on_row_activated)
+        self.marked_row = None
+        target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        target.connect("motion", self.on_list_motion)
+        target.connect("leave", lambda *_: self.mark_list_row(None))
+        target.connect("drop", self.on_list_drop)
+        self.list.add_controller(target)
         list_page.append(self.list)
 
         self.add_button = Gtk.Button(label="+  Add task", css_classes=["flat", "add-task"],
@@ -803,24 +839,50 @@ class TasksView(Gtk.Paned):
         if section:
             head.append(self.section_menu(project, section))
         column.append(head)
+        cards = []
         for task in tasks:
-            column.append(self.board_card(task))
+            card = self.board_card(task)
+            column.append(card)
+            cards.append((card, task))
         add = Gtk.Button(label="+  Add task", css_classes=["flat", "add-task"], halign=Gtk.Align.START)
         add.connect("clicked", lambda _b: TaskDialog(self, project=project["id"], section=section_id).present())
         column.append(add)
 
         target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
         target.connect("enter", lambda *_: (column.add_css_class("drop-hover"), Gdk.DragAction.MOVE)[1])
-        target.connect("leave", lambda *_: column.remove_css_class("drop-hover"))
-        target.connect("drop", self.on_board_drop, section_id)
+        target.connect("motion", self.on_board_motion, cards)
+        target.connect("leave", lambda *_: (column.remove_css_class("drop-hover"), self.mark_drop_slot(cards, None)))
+        target.connect("drop", self.on_board_drop, section_id, cards)
         column.add_controller(target)
         return column
 
+    def drop_slot(self, column, cards, y):
+        """Index of the card the drop lands before (len(cards) means after the last one)."""
+        for index, (card, _task) in enumerate(cards):
+            ok, bounds = card.compute_bounds(column)
+            if ok and y < bounds.get_y() + bounds.get_height() / 2:
+                return index
+        return len(cards)
+
+    def mark_drop_slot(self, cards, slot):
+        for index, (card, _task) in enumerate(cards):
+            card.remove_css_class("drop-before")
+            card.remove_css_class("drop-after")
+            if index == slot:
+                card.add_css_class("drop-before")
+            elif slot == len(cards) and index == slot - 1:
+                card.add_css_class("drop-after")
+
+    def on_board_motion(self, target, _x, y, cards):
+        self.mark_drop_slot(cards, self.drop_slot(target.get_widget(), cards, y))
+        return Gdk.DragAction.MOVE
+
     def board_card(self, task):
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, css_classes=["board-card"])
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
+                       css_classes=["board-card", *(["priority"] if task["priority"] else [])])
         top = Gtk.Box(spacing=8)
         check = Gtk.CheckButton(active=task["done"], valign=Gtk.Align.START,
-                                css_classes=["task-check", f"p{task['priority']}"])
+                                css_classes=check_classes(task))
         check.connect("toggled", self.on_check, task)
         top.append(check)
         text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
@@ -842,6 +904,8 @@ class TasksView(Gtk.Paned):
         copy.add_css_class("task-actions")
         top.append(copy)
         card.append(top)
+        self.append_card_subtasks(card, task, 1)
+        self.add_urgent_menu(card, task)
 
         drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
         drag.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(task["id"]))
@@ -849,12 +913,35 @@ class TasksView(Gtk.Paned):
         card.add_controller(drag)
         return card
 
-    def on_board_drop(self, target, task_id, _x, _y, section_id):
-        target.get_widget().remove_css_class("drop-hover")
+    def append_card_subtasks(self, card, task, depth):
+        for child in self.store.children(task):
+            if child["done"] and not self.show_done:
+                continue
+            row = Gtk.Box(spacing=6, margin_start=depth * 18)
+            check = Gtk.CheckButton(active=child["done"], valign=Gtk.Align.START,
+                                    css_classes=check_classes(child, "card-subtask"))
+            check.connect("toggled", self.on_check, child)
+            row.append(check)
+            title = Gtk.Label(xalign=0, hexpand=True, wrap=True, max_width_chars=26, css_classes=["card-subtask"])
+            title.set_markup(title_markup(child))
+            click = Gtk.GestureClick()
+            click.connect("released", lambda *_, c=child: TaskDialog(self, c).present())
+            title.add_controller(click)
+            row.append(title)
+            self.add_urgent_menu(row, child)
+            card.append(row)
+            self.append_card_subtasks(card, child, depth + 1)
+
+    def on_board_drop(self, target, task_id, _x, y, section_id, cards):
+        column = target.get_widget()
+        column.remove_css_class("drop-hover")
         task = self.store.find_task(task_id)
         if not task:
             return False
-        self.store.move_to_section(task, section_id)
+        slot = self.drop_slot(column, cards, y)
+        self.mark_drop_slot(cards, None)
+        before = cards[slot][1] if slot < len(cards) else None
+        self.store.move_to_section(task, section_id, before)
         GLib.idle_add(lambda: (self.reload(), False)[1])
         return True
 
@@ -906,8 +993,9 @@ class TasksView(Gtk.Paned):
         return cell
 
     def calendar_chip(self, task):
-        chip = Gtk.Box(spacing=4, css_classes=["cal-task"], tooltip_text=task["title"])
-        check = Gtk.CheckButton(active=task["done"], css_classes=["task-check", f"p{task['priority']}"])
+        chip = Gtk.Box(spacing=4, css_classes=["cal-task", *(["priority"] if task["priority"] else [])],
+                       tooltip_text=task["title"])
+        check = Gtk.CheckButton(active=task["done"], css_classes=check_classes(task))
         check.connect("toggled", self.on_check, task)
         chip.append(check)
         title = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
@@ -919,6 +1007,7 @@ class TasksView(Gtk.Paned):
         click.connect("released", lambda *_: TaskDialog(self, task).present())
         title.add_controller(click)
         chip.append(title)
+        self.add_urgent_menu(chip, task)
 
         drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
         drag.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(task["id"]))
@@ -970,7 +1059,7 @@ class TasksView(Gtk.Paned):
     def task_row(self, task, depth=0):
         box = Gtk.Box(spacing=10, margin_start=depth * 28)
         check = Gtk.CheckButton(active=task["done"], valign=Gtk.Align.START,
-                                css_classes=["task-check", f"p{task['priority']}"])
+                                css_classes=check_classes(task))
         check.connect("toggled", self.on_check, task)
         box.append(check)
 
@@ -1001,8 +1090,65 @@ class TasksView(Gtk.Paned):
         box.append(actions)
 
         row = Gtk.ListBoxRow(child=box)
+        if task["priority"]:
+            row.add_css_class("priority")
         row.task = task
+        self.add_urgent_menu(row, task)
+        if self.view[0] == "project" and depth == 0 and not task["done"]:
+            drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+            drag.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(task["id"]))
+            drag.connect("drag-begin", lambda source, _d: source.set_icon(Gtk.WidgetPaintable.new(box), 0, 0))
+            row.add_controller(drag)
         return row
+
+    def add_urgent_menu(self, widget, task):
+        click = Gtk.GestureClick(button=Gdk.BUTTON_SECONDARY)
+        click.connect("pressed", self.open_urgent_menu, widget, task)
+        widget.add_controller(click)
+
+    def open_urgent_menu(self, gesture, _n_press, x, y, widget, task):
+        gesture.set_state(Gtk.EventSequenceState.CLAIMED)
+        spot = Gdk.Rectangle()
+        spot.x, spot.y, spot.width, spot.height = int(x), int(y), 1, 1
+        button = Gtk.Button(label="Unmark urgent" if task["priority"] else "🔥 Mark as urgent", css_classes=["flat"])
+        popover = Gtk.Popover(child=button, has_arrow=False, pointing_to=spot)
+        popover.set_parent(widget)
+        popover.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent(), False)[1]))
+        button.connect("clicked", lambda _b: (popover.popdown(), self.store.set_priority(task, not task["priority"]),
+                                              GLib.idle_add(lambda: (self.reload(), False)[1])))
+        popover.popup()
+
+    def list_drop_spot(self, y):
+        row = self.list.get_row_at_y(int(y))
+        task = getattr(row, "task", None)
+        if self.view[0] != "project" or not task or task["done"] or not self.store.is_root(task):
+            return None
+        ok, bounds = row.compute_bounds(self.list)
+        return row, task, ok and y >= bounds.get_y() + bounds.get_height() / 2
+
+    def mark_list_row(self, spot):
+        if self.marked_row:
+            self.marked_row.remove_css_class("drop-before")
+            self.marked_row.remove_css_class("drop-after")
+        self.marked_row = spot and spot[0]
+        if spot:
+            spot[0].add_css_class("drop-after" if spot[2] else "drop-before")
+
+    def on_list_motion(self, _target, _x, y):
+        self.mark_list_row(self.list_drop_spot(y))
+        return Gdk.DragAction.MOVE
+
+    def on_list_drop(self, _target, task_id, _x, y):
+        spot = self.list_drop_spot(y)
+        self.mark_list_row(None)
+        task = self.store.find_task(task_id)
+        if not spot or not task or spot[1] is task:
+            return False
+        _row, anchor, after = spot
+        before = self.store.next_in_section(anchor, task) if after else anchor
+        self.store.move_to_section(task, anchor.get("section"), before)
+        GLib.idle_add(lambda: (self.reload(), False)[1])
+        return True
 
     def claude_button(self, task):
         button = Gtk.Button(label="🤖", tooltip_text="Copy as an implementation plan for Claude",

@@ -4,6 +4,7 @@ import json
 import math
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -17,7 +18,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 gi.require_version("Gsk", "4.0")
 gi.require_version("Graphene", "1.0")
-from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk  # noqa: E402
+from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk, Pango  # noqa: E402
 
 from workstation_notes import NOTES_CSS, NotesView  # noqa: E402
 from workstation_tasks import TASKS_CSS, TasksView  # noqa: E402
@@ -34,6 +35,7 @@ PANEL_FILE = os.path.join(GLib.get_user_runtime_dir(), "all-in-one-workstation",
 MODES = {"pomodoro": "Pomodoro", "short": "Short Break", "long": "Long Break"}
 SOUNDS = ["80s Alarm", "Alarm Clock", "Wristwatch Alarm", "Elevator Ding", "Ding", "Door Bell"]
 THEMES = {"dracula": ("Dracula", THEME_CSS), "retro": ("PC anos 2000", RETRO_CSS)}
+FONT_SCALES = [("Small", 90), ("Normal", 100), ("Large", 115), ("Extra large", 130), ("Huge", 150)]
 VOLUMES = [("Mute", 0), ("10%", 10), ("25%", 25), ("50%", 50), ("75%", 75), ("100%", 100)]
 LONG_BREAK_EVERY = 4
 
@@ -45,6 +47,8 @@ DEFAULTS = {
     "theme": "dracula",
     "boot_screen": True,
     "retro_sounds": True,
+    "hidden_tabs": [],
+    "font_scale": 100,
     "goal": 8,
     "sound": "80s Alarm",
     "volume": 50,
@@ -62,7 +66,15 @@ CSS = """
 .ctl { font-weight: bold; font-size: 15px; padding: 8px 26px; }
 .ctl:disabled { opacity: 0.45; }
 .section-title { font-weight: bold; font-size: 15px; }
-.log-head { font-weight: bold; opacity: 0.7; }
+.log-day { font-weight: bold; font-size: 13px; padding: 14px 4px 6px 4px; }
+.log-day-meta { font-size: 12px; opacity: 0.6; font-weight: normal; }
+.log-row { padding: 2px 4px; border-radius: 8px; }
+.log-dot { min-width: 8px; min-height: 8px; border-radius: 4px; }
+.log-kind { font-weight: bold; }
+.log-row.break .log-kind { font-weight: normal; opacity: 0.75; }
+.log-time { font-feature-settings: "tnum"; opacity: 0.8; }
+.log-dur { font-size: 12px; opacity: 0.55; font-feature-settings: "tnum"; }
+.log-row.break .log-desc { opacity: 0.75; }
 .hint { opacity: 0.6; font-size: 12px; }
 .week-count { font-size: 12px; font-weight: bold; font-feature-settings: "tnum"; }
 .week-label { font-size: 11px; opacity: 0.6; }
@@ -409,8 +421,21 @@ class OptionsWindow(Gtk.Window):
         theme.set_selected(theme_keys.index(self.store["theme"]) if self.store["theme"] in THEMES else 0)
         theme.connect("notify::selected", lambda d, _p: self.pick_theme(theme_keys[d.get_selected()]))
         labeled("Theme", theme)
+        scale_values = [value for _, value in FONT_SCALES]
+        font_scale = Gtk.DropDown.new_from_strings([label for label, _ in FONT_SCALES])
+        font_scale.set_selected(scale_values.index(self.store["font_scale"])
+                                if self.store["font_scale"] in scale_values else scale_values.index(100))
+        font_scale.connect("notify::selected", lambda d, _p: self.pick_font_scale(scale_values[d.get_selected()]))
+        labeled("Font size", font_scale)
         toggle("PC anos 2000: boot screen on startup?", "boot_screen")
         toggle("PC anos 2000: retro click sounds?", "retro_sounds")
+
+        title("Tabs")
+        for name, label in (("tasks", "Tasks"), ("notes", "Notes")):
+            check = Gtk.CheckButton(label=f"Show {label} tab?", active=name not in self.store["hidden_tabs"])
+            check.connect("toggled", lambda b, n=name: self.show_tab(n, b.get_active()))
+            grid.attach(check, 0, row, 2, 1)
+            row += 1
 
         title("User preferences")
         toggle("Timer indication in title?", "title_indicator")
@@ -462,8 +487,17 @@ class OptionsWindow(Gtk.Window):
         self.store[key] = value
         self.main.refresh()
 
+    def show_tab(self, name, shown):
+        hidden = [n for n in self.store["hidden_tabs"] if n != name]
+        self.store["hidden_tabs"] = hidden if shown else [*hidden, name]
+        self.main.apply_tabs()
+
     def pick_theme(self, key):
         self.store["theme"] = key
+        self.main.apply_theme()
+
+    def pick_font_scale(self, value):
+        self.store["font_scale"] = value
         self.main.apply_theme()
 
     def pick_sound(self, name):
@@ -558,6 +592,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
 
         self.refresh()
         self.rebuild_log()
+        self.apply_tabs()
         self.apply_theme()
         self.boot = None
         if self.is_retro() and self.store["boot_screen"]:
@@ -568,12 +603,17 @@ class WorkstationWindow(Gtk.ApplicationWindow):
 
     def apply_theme(self):
         retro = self.is_retro()
-        self.get_application().load_theme(self.store["theme"])
+        self.get_application().load_theme(self.store["theme"], self.store["font_scale"])
         for widget in (self.retro_icon, self.retro_title, self.tabstrip, self.statusbar, self.scanlines):
             widget.set_visible(retro)
         self.header_tabs.set_visible(not retro)
         self.goal_bar.set_retro(retro)
         self.week_chart.set_retro(retro)
+
+    def apply_tabs(self):
+        for name in ("tasks", "notes"):
+            self.stack.get_page(self.stack.get_child_by_name(name)).set_visible(
+                name not in self.store["hidden_tabs"])
 
     def build_statusbar(self):
         bar = Gtk.Box(spacing=4, css_classes=["statusbar"])
@@ -682,12 +722,12 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         top = Gtk.Box(spacing=8)
         top.append(Gtk.Label(label="Time Log", xalign=0, hexpand=True, css_classes=["section-title"]))
-        clear = Gtk.Button(label="Clear timer log", css_classes=["flat"])
+        clear = Gtk.Button(label="Clear log", css_classes=["flat"])
         clear.connect("clicked", self.clear_log)
         top.append(clear)
         box.append(top)
-        self.log_grid = Gtk.Grid(row_spacing=6, column_spacing=14)
-        box.append(self.log_grid)
+        self.log_list = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        box.append(self.log_list)
         return box
 
     def duration(self, mode=None):
@@ -811,21 +851,68 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.rebuild_log()
 
     def rebuild_log(self):
-        while child := self.log_grid.get_first_child():
-            self.log_grid.remove(child)
-        for col, text in enumerate(("Session", "Start time", "End time", "Description")):
-            self.log_grid.attach(Gtk.Label(label=text, xalign=0, css_classes=["log-head"]), col, 0, 1, 1)
+        while child := self.log_list.get_first_child():
+            self.log_list.remove(child)
         if not self.store["log"]:
-            self.log_grid.attach(Gtk.Label(label="No sessions yet.", xalign=0, css_classes=["hint"]), 0, 1, 4, 1)
+            self.log_list.append(Gtk.Label(label="No sessions yet. Start a pomodoro to log it here.", xalign=0,
+                                           css_classes=["hint"], margin_top=6))
             return
-        for row, entry in enumerate(reversed(self.store["log"]), start=1):
-            self.log_grid.attach(Gtk.Label(label=entry["session"], xalign=0), 0, row, 1, 1)
-            self.log_grid.attach(Gtk.Label(label=entry["start"], xalign=0), 1, row, 1, 1)
-            self.log_grid.attach(Gtk.Label(label=entry["end"] or "…", xalign=0), 2, row, 1, 1)
-            description = Gtk.Entry(text=entry["description"], placeholder_text="What did you work on?",
-                                    hexpand=True)
-            description.connect("changed", self.on_description_changed, entry)
-            self.log_grid.attach(description, 3, row, 1, 1)
+        days = {}
+        for entry in reversed(self.store["log"]):
+            days.setdefault(entry.get("date", ""), []).append(entry)
+        for day, entries in days.items():
+            self.log_list.append(self.log_day_header(day, entries))
+            for entry in entries:
+                self.log_list.append(self.log_row(entry))
+
+    @staticmethod
+    def entry_seconds(entry):
+        if not entry["end"]:
+            return None
+        start, end = (datetime.strptime(entry[k], "%H:%M:%S") for k in ("start", "end"))
+        return (end - start).total_seconds() % 86400
+
+    @staticmethod
+    def format_minutes(seconds):
+        minutes = round(seconds / 60)
+        return f"{minutes // 60}h {minutes % 60:02d}min" if minutes >= 60 else f"{minutes} min"
+
+    def log_day_header(self, day, entries):
+        if not day:
+            name = "Earlier"
+        else:
+            d = date.fromisoformat(day)
+            delta = (date.today() - d).days
+            name = "Today" if delta == 0 else "Yesterday" if delta == 1 else d.strftime("%a %d %b")
+        focus = [self.entry_seconds(e) or 0 for e in entries if e["session"] == MODES["pomodoro"]]
+        full = sum(1 for f in focus if f >= self.store["times"]["pomodoro"] * 60 - 5)
+        meta = f"{full} pomodoro{'s' if full != 1 else ''}"
+        if sum(focus) >= 60:
+            meta += f" · {self.format_minutes(sum(focus))} focused"
+        header = Gtk.Box(spacing=8, css_classes=["log-day"])
+        header.append(Gtk.Label(label=name, xalign=0))
+        header.append(Gtk.Label(label=meta, xalign=0, css_classes=["log-day-meta"]))
+        return header
+
+    def log_row(self, entry):
+        mode = next((key for key, name in MODES.items() if name == entry["session"]), "pomodoro")
+        row = Gtk.Box(spacing=12, css_classes=["log-row", mode] + (["break"] if mode != "pomodoro" else []))
+        row.append(Gtk.Box(css_classes=["log-dot", mode], valign=Gtk.Align.CENTER))
+        row.append(Gtk.Label(label=entry["session"], xalign=0, width_chars=11, css_classes=["log-kind", mode]))
+        running = entry is self.open_entry
+        end = entry["end"][:5] if entry["end"] else "now" if running else "?"
+        row.append(Gtk.Label(label=f"{entry['start'][:5]} – {end}", xalign=0, width_chars=13,
+                             css_classes=["log-time"]))
+        seconds = self.entry_seconds(entry)
+        duration = "running" if running else "unfinished" if seconds is None else \
+            "< 1 min" if seconds < 60 else self.format_minutes(seconds)
+        row.append(Gtk.Label(label=duration, xalign=0, width_chars=9, css_classes=["log-dur"]))
+        placeholder = "What did you work on?" if mode == "pomodoro" else "Add a note"
+        description = Gtk.Entry(text=entry["description"], placeholder_text=placeholder, hexpand=True,
+                                css_classes=["log-desc"])
+        description.connect("changed", self.on_description_changed, entry)
+        row.append(description)
+        return row
 
     def on_description_changed(self, field, entry):
         entry["description"] = field.get_text()
@@ -899,7 +986,8 @@ class WorkstationWindow(Gtk.ApplicationWindow):
             return True
         tabs = {Gdk.KEY_1: "timer", Gdk.KEY_2: "tasks", Gdk.KEY_3: "notes"}
         if state & Gdk.ModifierType.ALT_MASK and keyval in tabs:
-            self.stack.set_visible_child_name(tabs[keyval])
+            if tabs[keyval] not in self.store["hidden_tabs"]:
+                self.stack.set_visible_child_name(tabs[keyval])
             return True
         if self.stack.get_visible_child_name() != "timer":
             return False
@@ -934,9 +1022,15 @@ class WorkstationApp(Gtk.Application):
         Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), self.provider,
                                                   Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
-    def load_theme(self, name):
+    def load_theme(self, name, font_scale=100):
         _label, theme_css = THEMES.get(name, THEMES["dracula"])
-        self.provider.load_from_string(CSS + TASKS_CSS + NOTES_CSS + theme_css)
+        css = CSS + TASKS_CSS + NOTES_CSS + theme_css
+        if font_scale != 100:
+            css = re.sub(r"font-size: (\d+)px", lambda m: f"font-size: {round(int(m[1]) * font_scale / 100)}px", css)
+            base = Pango.FontDescription.from_string(Gtk.Settings.get_default().props.gtk_font_name)
+            points = base.get_size() / Pango.SCALE or 11
+            css = f"window {{ font-size: {points * font_scale / 100:.1f}pt; }}\n" + css
+        self.provider.load_from_string(css)
 
     def do_activate(self):
         window = self.get_active_window() or WorkstationWindow(self)

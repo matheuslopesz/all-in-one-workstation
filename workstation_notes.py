@@ -11,6 +11,7 @@ from workstation_theme import ACCENT, GREEN, PURPLE  # noqa: E402
 
 NOTES_DIR = os.path.join(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) or GLib.get_home_dir(),
                          "Workstation Notes")
+CLAUDE_FOLDER = "Claude"
 INLINE = ["bold", "italic", "underline", "strike", "mark", "code"]
 BLOCKS = ["h1", "h2", "h3", "quote", "codeblock", "table"]
 LISTS = ["bullet", "numbered", "check"]
@@ -18,6 +19,10 @@ BLOCK_MENU = [("p", "Text"), ("h1", "Heading 1"), ("h2", "Heading 2"), ("h3", "H
               ("quote", "Quote"), ("codeblock", "Code block")]
 MARKERS = {"bullet": "•", "check": "☐"}
 CHECKED = "☑"
+TABLE_WIDTH = 72
+PANGO = {"bold": ("<b>", "</b>"), "italic": ("<i>", "</i>"), "underline": ("<u>", "</u>"),
+         "strike": ("<s>", "</s>"), "mark": ('<span background="#f1fa8c" bgalpha="30%">', "</span>"),
+         "code": (f'<span font_family="monospace" foreground="{GREEN}">', "</span>")}
 TAGS = {
     "h1": {"weight": 800, "scale": 1.8, "pixels_above_lines": 10},
     "h2": {"weight": 800, "scale": 1.45, "pixels_above_lines": 8},
@@ -67,6 +72,14 @@ NOTES_CSS = f"""
 .notes-sidebar row {{ padding: 6px 10px; border-radius: 6px; }}
 .notes-sidebar row:selected {{ background: alpha({ACCENT}, 0.16); color: inherit; }}
 .note-name {{ font-weight: bold; }}
+.notes-sidebar row.notes-group {{ padding: 6px 6px; }}
+.notes-group label {{ font-weight: bold; }}
+.notes-group .count {{ font-weight: normal; opacity: 0.5; font-size: 12px; }}
+.group-arrow {{ opacity: 0.6; min-width: 14px; }}
+.md-table {{ border: 1px solid alpha(currentColor, 0.18); border-radius: 6px; margin: 4px 0; }}
+.md-cell {{ padding: 6px 10px; font-size: 13px; border-bottom: 1px solid alpha(currentColor, 0.1);
+           border-right: 1px solid alpha(currentColor, 0.1); }}
+.md-head {{ font-weight: bold; background: alpha(currentColor, 0.06); }}
 .note-preview {{ font-size: 12px; opacity: 0.55; }}
 entry.note-title {{ background: transparent; border: none; box-shadow: none; outline: none;
                    font-size: 26px; font-weight: 800; padding: 0; }}
@@ -75,6 +88,33 @@ textview.note-body, textview.note-body text {{ background: transparent; font-siz
 .note-toolbar button {{ min-width: 30px; padding: 4px 6px; font-weight: bold; }}
 .note-toolbar button.active {{ background: alpha({PURPLE}, 0.25); color: {PURPLE}; }}
 """
+
+
+def table_rows(lines):
+    rows = [[cell.strip() for cell in re.split(r"(?<!\\)\|", line.strip().strip("|"))] for line in lines]
+    return [r for r in rows if not all(re.fullmatch(r":?-+:?", cell) for cell in r if cell)]
+
+
+def cell_markup(text):
+    out = ""
+    for chunk, tags in parse_inline(text):
+        piece = GLib.markup_escape_text(chunk)
+        for tag in tags:
+            if tag.startswith("link:"):
+                piece = f'<a href="{GLib.markup_escape_text(tag[5:])}">{piece}</a>'
+            else:
+                piece = PANGO[tag][0] + piece + PANGO[tag][1]
+        out += piece
+    return out
+
+
+def readable_markdown(text):
+    out, in_code = [], False
+    for line in text.split("\n"):
+        if line.lstrip().startswith("```"):
+            in_code = not in_code
+        out.append("─" * 40 if not in_code and re.fullmatch(r"\s*(-{3,}|\*{3,}|_{3,})\s*", line) else line)
+    return "\n".join(out)
 
 
 def safe_title(title):
@@ -210,6 +250,7 @@ class NoteStore:
         if not os.path.isdir(NOTES_DIR):
             os.makedirs(NOTES_DIR)
             self.write("Welcome", WELCOME)
+        os.makedirs(os.path.join(NOTES_DIR, CLAUDE_FOLDER), exist_ok=True)
 
     def path(self, title):
         return os.path.join(NOTES_DIR, f"{title}.md")
@@ -219,8 +260,21 @@ class NoteStore:
 
     def titles(self):
         names = [n for n in os.listdir(NOTES_DIR) if n.endswith(".md")]
+        for folder in self.claude_folders():
+            rel = os.path.relpath(folder, NOTES_DIR)
+            names += [f"{rel}/{n}" for n in os.listdir(folder) if n.endswith(".md")]
         names.sort(key=lambda n: os.path.getmtime(os.path.join(NOTES_DIR, n)), reverse=True)
         return [n[:-3] for n in names]
+
+    def claude_folders(self):
+        return [root for root, _dirs, _files in os.walk(os.path.join(NOTES_DIR, CLAUDE_FOLDER))]
+
+    def is_claude(self, title):
+        return title is not None and title.startswith(f"{CLAUDE_FOLDER}/")
+
+    def theme(self, title):
+        parts = title.split("/")
+        return "/".join(parts[1:-1]) if self.is_claude(title) else None
 
     def read(self, title):
         try:
@@ -247,7 +301,10 @@ class NoteStore:
         os.rename(self.path(old), self.path(new))
 
     def trash(self, title):
-        Gio.File.new_for_path(self.path(title)).trash(None)
+        if os.path.islink(self.path(title)):
+            os.remove(self.path(title))
+        else:
+            Gio.File.new_for_path(self.path(title)).trash(None)
 
 
 class NotesView(Gtk.Paned):
@@ -256,6 +313,9 @@ class NotesView(Gtk.Paned):
                          shrink_start_child=False, resize_start_child=False)
         self.store = NoteStore()
         self.current = None
+        self.loaded_text = None
+        self.expanded = set()
+        self.disk_id = None
         self.loading = False
         self.applying = False
         self.syncing = False
@@ -275,6 +335,35 @@ class NotesView(Gtk.Paned):
 
         titles = self.store.titles()
         self.open_note(titles[0] if titles else None)
+        self.monitors = {}
+        self.watch_folders()
+
+    def watch_folders(self):
+        for folder in [NOTES_DIR, *self.store.claude_folders()]:
+            if folder not in self.monitors:
+                monitor = Gio.File.new_for_path(folder).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, None)
+                monitor.connect("changed", self.on_disk_event)
+                self.monitors[folder] = monitor
+
+    def on_disk_event(self, *_args):
+        if self.disk_id:
+            GLib.source_remove(self.disk_id)
+        self.disk_id = GLib.timeout_add(300, self.on_disk_changed)
+
+    def on_disk_changed(self):
+        self.disk_id = None
+        self.watch_folders()
+        if self.save_id is not None or self.buffer.get_modified():
+            self.rebuild_list()
+            return False
+        if self.current is not None and not self.store.exists(self.current):
+            titles = self.store.titles()
+            self.open_note(titles[0] if titles else None)
+        elif self.current is not None and self.store.read(self.current) != self.loaded_text:
+            self.open_note(self.current)
+        else:
+            self.rebuild_list()
+        return False
 
     def build_sidebar(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, css_classes=["notes-sidebar"],
@@ -290,6 +379,7 @@ class NotesView(Gtk.Paned):
 
         self.note_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.note_list.connect("row-selected", self.on_row_selected)
+        self.note_list.connect("row-activated", self.on_row_activated)
         scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
         scroller.set_child(self.note_list)
         box.append(scroller)
@@ -311,7 +401,11 @@ class NotesView(Gtk.Paned):
         head.append(self.title_entry)
         head.append(self.note_menu())
         box.append(head)
-        box.append(self.build_toolbar())
+        self.claude_banner = Gtk.Label(label="🤖 Written by Claude · read-only", xalign=0,
+                                       css_classes=["note-preview"])
+        box.append(self.claude_banner)
+        self.toolbar = self.build_toolbar()
+        box.append(self.toolbar)
 
         self.buffer = Gtk.TextBuffer()
         for name, props in TAGS.items():
@@ -387,22 +481,52 @@ class NotesView(Gtk.Paned):
         query = self.search.get_text().strip().lower()
         self.syncing_list = True
         self.note_list.remove_all()
-        for title in self.store.titles():
-            text = self.store.read(title)
-            if query and query not in title.lower() and query not in text.lower():
+        titles = self.store.titles()
+        groups = {}
+        for title in titles:
+            groups.setdefault(self.store.theme(title), []).append(title)
+        for theme in sorted(groups, key=lambda t: (t is not None, t or "")):
+            matching = [t for t in groups[theme]
+                        if not query or query in t.lower() or query in self.store.read(t).lower()]
+            if not matching:
                 continue
-            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-            box.append(Gtk.Label(label=title, xalign=0, ellipsize=Pango.EllipsizeMode.END, css_classes=["note-name"]))
-            preview = preview_of(text)
-            if preview:
-                box.append(Gtk.Label(label=preview, xalign=0, ellipsize=Pango.EllipsizeMode.END,
-                                     css_classes=["note-preview"]))
-            row = Gtk.ListBoxRow(child=box)
-            row.title = title
-            self.note_list.append(row)
-            if title == self.current:
-                self.note_list.select_row(row)
+            open_ = bool(query) or theme in self.expanded
+            self.append_group_row(theme, len(matching), open_)
+            if open_:
+                for title in matching:
+                    self.append_note_row(title)
         self.syncing_list = False
+
+    def append_group_row(self, theme, count, open_):
+        box = Gtk.Box(spacing=6)
+        box.append(Gtk.Label(label="▾" if open_ else "▸", css_classes=["group-arrow"]))
+        name = "📝 My notes" if theme is None else f"🤖 {theme or 'Claude'}"
+        box.append(Gtk.Label(label=name, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END))
+        box.append(Gtk.Label(label=str(count), css_classes=["count"]))
+        row = Gtk.ListBoxRow(child=box, selectable=False, css_classes=["notes-group"])
+        row.group = theme
+        self.note_list.append(row)
+
+    def on_row_activated(self, _listbox, row):
+        if not hasattr(row, "group"):
+            return
+        self.expanded.symmetric_difference_update({row.group})
+        self.rebuild_list()
+
+    def append_note_row(self, title):
+        text = self.store.read(title)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_start=20)
+        box.append(Gtk.Label(label=title.rsplit("/", 1)[-1], xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                             css_classes=["note-name"]))
+        preview = preview_of(text)
+        if preview:
+            box.append(Gtk.Label(label=preview, xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                                 css_classes=["note-preview"]))
+        row = Gtk.ListBoxRow(child=box)
+        row.title = title
+        self.note_list.append(row)
+        if title == self.current:
+            self.note_list.select_row(row)
 
     def open_note(self, title):
         self.flush()
@@ -411,17 +535,25 @@ class NotesView(Gtk.Paned):
             self.pages.set_visible_child_name("empty")
             self.rebuild_list()
             return
-        self.title_entry.set_text(title)
-        self.load(self.store.read(title))
+        claude = self.store.is_claude(title)
+        self.title_entry.set_text(title.rsplit("/", 1)[-1])
+        self.title_entry.set_editable(not claude)
+        self.body.set_editable(not claude)
+        self.body.set_cursor_visible(not claude)
+        self.toolbar.set_visible(not claude)
+        self.claude_banner.set_visible(claude)
+        self.loaded_text = self.store.read(title)
+        self.load(readable_markdown(self.loaded_text) if claude else self.loaded_text, rich_tables=claude)
         self.pages.set_visible_child_name("editor")
         self.rebuild_list()
 
     def new_note(self):
+        self.expanded.add(None)
         self.open_note(self.store.create())
         self.title_entry.grab_focus()
 
     def commit_title(self):
-        if self.current is None:
+        if self.current is None or self.store.is_claude(self.current):
             return
         new = safe_title(self.title_entry.get_text())
         if not new or new == self.current or self.store.exists(new):
@@ -456,25 +588,51 @@ class NotesView(Gtk.Paned):
 
     # Loading and saving
 
-    def load(self, text):
+    def load(self, text, rich_tables=False):
         self.loading = True
         self.buffer.set_text("")
         lines = parse_markdown(text)
-        for i, (block, marker, segments) in enumerate(lines):
+        n = 0
+        while n < len(lines):
+            block, marker, segments = lines[n]
             line_tags = [block] if block in BLOCKS else []
-            if marker:
-                self.insert(marker + " ", "marker")
-            for chunk, tags in segments:
-                for name in tags:
-                    self.ensure_link_tag(name)
-                self.insert(chunk, *line_tags, *tags, *(["done"] if marker == CHECKED else []))
-            if i < len(lines) - 1:
+            if rich_tables and block == "table":
+                end = n
+                while end + 1 < len(lines) and lines[end + 1][0] == "table":
+                    end += 1
+                self.insert_table(["".join(t for t, _tags in lines[k][2]) for k in range(n, end + 1)])
+                line_tags, n = [], end
+            else:
+                if marker:
+                    self.insert(marker + " ", "marker")
+                for chunk, tags in segments:
+                    for name in tags:
+                        self.ensure_link_tag(name)
+                    self.insert(chunk, *line_tags, *tags, *(["done"] if marker == CHECKED else []))
+            if n < len(lines) - 1:
                 self.insert("\n", *line_tags)
+            n += 1
         self.buffer.place_cursor(self.buffer.get_start_iter())
         self.buffer.set_modified(False)
         self.pending = self.pending_block = None
         self.loading = False
         self.sync_toolbar()
+
+    def insert_table(self, lines):
+        rows = table_rows(lines)
+        cols = max(map(len, rows))
+        natural = [max((len(r[i]) for r in rows if i < len(r)), default=0) for i in range(cols)]
+        total = sum(natural) or 1
+        widths = [max(4, min(n, TABLE_WIDTH * n // total)) for n in natural]
+        grid = Gtk.Grid(css_classes=["md-table"])
+        for y, row in enumerate(rows):
+            for x in range(cols):
+                label = Gtk.Label(xalign=0, yalign=0, wrap=True, wrap_mode=Pango.WrapMode.WORD_CHAR, selectable=True,
+                                  width_chars=widths[x], max_width_chars=widths[x],
+                                  css_classes=["md-cell", *(["md-head"] if y == 0 else [])])
+                label.set_markup(cell_markup(row[x] if x < len(row) else ""))
+                grid.attach(label, x, y, 1, 1)
+        self.body.add_child_at_anchor(grid, self.buffer.create_child_anchor(self.buffer.get_end_iter()))
 
     def insert(self, text, *tags):
         self.buffer.insert_with_tags_by_name(self.buffer.get_end_iter(), text, *tags)
@@ -517,8 +675,9 @@ class NotesView(Gtk.Paned):
         if self.save_id is None:
             return False
         self.save_id = None
-        if self.current is not None and self.buffer.get_modified():
-            self.store.write(self.current, self.to_markdown())
+        if self.current is not None and self.buffer.get_modified() and not self.store.is_claude(self.current):
+            self.loaded_text = self.to_markdown()
+            self.store.write(self.current, self.loaded_text)
             self.buffer.set_modified(False)
             self.rebuild_list()
         return False
@@ -731,6 +890,8 @@ class NotesView(Gtk.Paned):
         self.sync_toolbar()
 
     def on_key(self, _controller, keyval, _keycode, state):
+        if not self.body.get_editable():
+            return False
         if state & Gdk.ModifierType.CONTROL_MASK:
             name = {Gdk.KEY_b: "bold", Gdk.KEY_i: "italic", Gdk.KEY_u: "underline"}.get(Gdk.keyval_to_lower(keyval))
             if name:
@@ -775,11 +936,12 @@ class NotesView(Gtk.Paned):
         found, where = self.body.get_iter_at_location(bx, by)
         if not found:
             return
-        if (where.get_line_offset() == 0 and where.get_char() in (MARKERS["check"], CHECKED)
+        readonly = not self.body.get_editable()
+        if (not readonly and where.get_line_offset() == 0 and where.get_char() in (MARKERS["check"], CHECKED)
                 and where.has_tag(self.tag("marker"))):
             gesture.set_state(Gtk.EventSequenceState.CLAIMED)
             self.toggle_check(where.get_line())
-        elif gesture.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
+        elif readonly or gesture.get_current_event_state() & Gdk.ModifierType.CONTROL_MASK:
             link = next((t.props.name[5:] for t in where.get_tags() if (t.props.name or "").startswith("link:")), None)
             if link:
                 gesture.set_state(Gtk.EventSequenceState.CLAIMED)

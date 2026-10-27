@@ -15,12 +15,14 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 - **Alarme**: 6 sons sintetizados na hora (sem arquivos de áudio) e volume ajustável (Mute, 10%–100%)
 - **Notificações** de desktop quando o tempo acaba e auto start opcional do próximo ciclo
 - **Tasks**: lista de tarefas com projetos, prioridades e datas. Um clique inicia um pomodoro focado na tarefa
-- **Board**: cada projeto pode ser visto em lista ou em board (kanban), com seções como colunas e arrastar e soltar entre elas
+- **Board**: cada projeto pode ser visto em lista ou em board (kanban), com seções como colunas e arrastar e soltar para mover entre colunas ou reordenar dentro delas
 - **Sub-tasks**: tarefas dentro de tarefas, em quantos níveis quiser. Concluir a tarefa conclui as sub-tasks
 - **Copiar para o Claude**: o botão 🤖 de uma tarefa copia ela e todas as sub-tasks como um plano de implementação pronto para colar no Claude
 - **Tema Dracula**: visual no estilo do Todoist com as cores do Dracula, inclusive no timer da barra superior
 - **Tema PC anos 2000** (opcional, em Options → Theme): visual de Windows 98 vaporwave, com botões 3D, fonte pixelada VT323, timer num monitor CRT, tela de boot de BIOS e cliques e bipes retrô
 - **Notes**: editor de texto visual com barra de ferramentas (títulos, negrito, itálico, sublinhado, riscado, destaque, código, listas e checklist), sem precisar escrever Markdown. Por baixo, cada nota é salva como `.md` em `~/Documentos/Workstation Notes`
+- **Notas do Claude**: arquivos `.md` que o Claude grava em `~/Documentos/Workstation Notes/Claude` aparecem sozinhos na aba Notes, agrupados por tema (cada subpasta vira um grupo 🤖), somente leitura (tabelas alinhadas). Notas editadas fora do app também recarregam sozinhas
+- **Abas opcionais**: em Options → Tabs dá para esconder as abas Tasks e Notes (o Timer fica sempre visível)
 - **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
 ## Atalhos

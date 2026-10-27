@@ -47,6 +47,8 @@ CRT_CSS = "".join(
     f".card.{mode} .timer {{ color: {color}; text-shadow: 0 0 10px alpha({color}, 0.9), 0 0 34px alpha({color}, 0.55); }}\n"
     f".card.{mode} .mode-btn {{ color: alpha({color}, 0.75); }}\n"
     f".card.{mode} .mode-btn:checked {{ background: {color}; color: {BLACK}; box-shadow: 0 0 12px alpha({color}, 0.6); }}\n"
+    f".log-dot.{mode} {{ background: {color}; border-radius: 0; }}\n"
+    f".log-kind.{mode} {{ color: {color}; }}\n"
     for mode, color in PHOSPHOR.items())
 
 RETRO_CSS = f"""
@@ -150,6 +152,12 @@ entry.note-title {{ font-family: "{RETRO_FONT}"; font-size: 38px; font-weight: n
 .board-card:hover .task-actions {{ opacity: 1; }}
 .task-form {{ background: #160a2e; {DARK_RAISED} }}
 .cal-day {{ border-color: alpha({PURPLE}, 0.25); }}
+.log-day {{ border-bottom: 1px dashed alpha({PURPLE}, 0.5); }}
+.log-day, .log-kind, .log-time, .log-dur {{ font-family: "{RETRO_FONT}"; font-size: 19px; }}
+.log-row {{ border-radius: 0; }}
+.log-day-meta {{ font-family: "{RETRO_FONT}"; font-size: 16px; }}
+entry.log-desc {{ background: transparent; box-shadow: none; border-color: transparent; }}
+entry.log-desc:focus-within {{ background: #0f0722; box-shadow: inset 1px 1px {BLACK}, 0 0 0 1px {CYAN}; }}
 
 .boot {{ background: {BLACK}; padding: 28px 34px; }}
 .boot label {{ font-family: "{RETRO_FONT}"; font-size: 22px; color: #d8d0e8; }}
