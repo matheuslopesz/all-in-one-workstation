@@ -9,10 +9,13 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
-from workstation_agent import PLAN_MODEL, PlanError, plan_prompt, run_plan  # noqa: E402
+import workstation_runs as runs  # noqa: E402
+from workstation_agent import PLAN_MODEL, PlanError, jira_mine, plan_prompt, run_plan  # noqa: E402
 
-from workstation_store import (DAY_NAMES, INBOX, JIRA_BROWSE, MONTH_NAMES, PROJECTS_DIR, TASKS_FILE,  # noqa: E402
-                               TaskStore, claude_prompt, due_of, jira_key, list_repos, short_date)
+from workstation_repos import (RepoError, create_worktree, display, identities, local_path,  # noqa: E402
+                               repos_with_branch, slugify)
+from workstation_store import (DAY_NAMES, INBOX, JIRA_BROWSE, JIRA_KEY, MONTH_NAMES, TASKS_FILE,  # noqa: E402
+                               TaskStore, claude_prompt, due_of, jira_key, short_date, short_id)
 from workstation_theme import ACCENT, BG_DARKER, GREEN, ORANGE, PURPLE, RED  # noqa: E402
 from workstation_todoist import Todoist, TodoistSync, load_token, save_token  # noqa: E402
 
@@ -89,6 +92,8 @@ label.card-subtask {{ font-size: 12px; }}
 .task-list row.drop-before {{ box-shadow: inset 0 3px 0 0 {ACCENT}; }}
 .task-list row.drop-after {{ box-shadow: inset 0 -3px 0 0 {ACCENT}; }}
 .task-context {{ font-size: 13px; opacity: 0.8; }}
+.repo-main {{ font-weight: bold; opacity: 1; }}
+.repo-chip {{ font-size: 12px; padding: 0 6px; min-height: 22px; }}
 .notes-head {{ font-weight: bold; font-size: 13px; margin-top: 4px; }}
 .task-note {{ font-size: 13px; padding: 6px 8px; border-radius: 6px; background: alpha(currentColor, 0.04); }}
 .task-note.claude {{ background: alpha({PURPLE}, 0.10); }}
@@ -116,13 +121,6 @@ def due_label(d):
 
 def check_classes(task, *extra):
     return ["task-check", *extra, *(["priority"] if task["priority"] else [])]
-
-
-def repo_name(path):
-    if not path:
-        return None
-    path = path.rstrip("/")
-    return os.path.relpath(path, PROJECTS_DIR) if path.startswith(PROJECTS_DIR + os.sep) else os.path.basename(path)
 
 
 def title_markup(task):
@@ -174,8 +172,8 @@ class TaskForm(Gtk.Box):
         self.due_button = Gtk.MenuButton(popover=self.build_due_popover())
         self.priority = Gtk.ToggleButton(label="🔥 Urgent", css_classes=["priority-toggle"])
         self.project = Gtk.DropDown()
-        self.repos = [None, *list_repos()]
-        self.repo = Gtk.DropDown.new_from_strings(["Repo: inherit", *map(repo_name, self.repos[1:])])
+        self.repos = [None, *identities()]
+        self.repo = Gtk.DropDown.new_from_strings(["Repo: inherit", *map(display, self.repos[1:])])
         self.repo.set_tooltip_text("Git repo for this task (sub-tasks and the project default are inherited)")
         chips.append(self.due_button)
         chips.append(self.priority)
@@ -236,7 +234,7 @@ class TaskForm(Gtk.Box):
         self.project.set_selected(self.project_ids.index(project) if project in self.project_ids else 0)
         if repo and repo not in self.repos:
             self.repos.append(repo)
-            self.repo.get_model().append(repo_name(repo))
+            self.repo.get_model().append(display(repo))
         self.repo.set_selected(self.repos.index(repo))
         self.title.grab_focus()
 
@@ -276,7 +274,7 @@ class TaskDialog(Gtk.Window):
         form.project.set_sensitive(not parent and not (task and not view.store.is_root(task)))
         box.append(form)
         if task:
-            self.context = Gtk.Label(xalign=0, wrap=True, css_classes=["task-context"])
+            self.context = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             box.append(self.context)
             self.subtasks = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             box.append(self.subtasks)
@@ -294,16 +292,70 @@ class TaskDialog(Gtk.Window):
         self.rebuild_subtasks()
 
     def rebuild_context(self):
-        parts = []
-        repo = self.view.store.repo(self.task)
+        while child := self.context.get_first_child():
+            self.context.remove(child)
+        store, task = self.view.store, self.task
+        repo, extras = store.repo(task), store.extra_repos(task)
+        row = Gtk.Box(spacing=6)
+        row.append(Gtk.Label(label="📁 Repos", css_classes=["task-context"]))
         if repo:
-            inherited = "" if self.task.get("repo") else " (inherited)"
-            parts.append(f"📁 {GLib.markup_escape_text(repo_name(repo))}{inherited}")
-        key = jira_key(self.task)
+            inherited = "" if task.get("repo") else " (inherited)"
+            row.append(Gtk.Label(label=f"{display(repo)}{inherited}", tooltip_text=local_path(repo) or repo,
+                                 css_classes=["task-context", "repo-main"]))
+        for extra in extras:
+            chip = Gtk.Button(label=f"{display(extra)}  ✕", tooltip_text=f"Remove {extra} from this task",
+                              css_classes=["flat", "repo-chip"])
+            chip.connect("clicked", lambda _b, e=extra: self.set_extras([r for r in extras if r != e]))
+            row.append(chip)
+        if store.is_root(task):
+            others = [i for i in identities() if i != repo and i not in extras]
+            add = Gtk.DropDown.new_from_strings(["+ repo", *map(display, others)])
+            add.set_tooltip_text("Add another repo this ticket touches")
+            add.connect("notify::selected", lambda d, _p: d.get_selected() and self.add_repo(others[d.get_selected() - 1]))
+            row.append(add)
+        key = jira_key(task)
         if key:
-            parts.append(f'🔗 <a href="{JIRA_BROWSE}{key}">{key}</a>')
-        self.context.set_markup("   ·   ".join(parts))
-        self.context.set_visible(bool(parts))
+            link = Gtk.Label(css_classes=["task-context"], margin_start=10)
+            link.set_markup(f'🔗 <a href="{JIRA_BROWSE}{key}">{key}</a>')
+            row.append(link)
+        self.context.append(row)
+        suggested = [i for i in self.view.branch_repos.get(key, []) if i != repo and i not in extras] if key else []
+        if suggested and store.is_root(task):
+            hint = Gtk.Box(spacing=6)
+            hint.append(Gtk.Label(label=f"💡 Branches with {key} in:", css_classes=["task-context"]))
+            for identity in suggested:
+                button = Gtk.Button(label=f"+ {display(identity)}", css_classes=["flat", "repo-chip"],
+                                    tooltip_text=identity)
+                button.connect("clicked", lambda _b, i=identity: self.add_repo(i))
+                hint.append(button)
+            self.context.append(hint)
+        workspace = store.workspace(task)
+        if workspace:
+            for entry in workspace:
+                line = Gtk.Box(spacing=6)
+                line.append(Gtk.Label(label=f"🌳 {display(entry['identity'])} · {entry['branch']}",
+                                      tooltip_text=entry["path"], css_classes=["task-context"]))
+                folder = Gtk.Button(label="Open", css_classes=["flat", "repo-chip"])
+                folder.connect("clicked", lambda _b, p=entry["path"]: Gtk.FileLauncher.new(
+                    Gio.File.new_for_path(p)).launch(self, None, None, None))
+                line.append(folder)
+                self.context.append(line)
+        if key and key not in self.view.branch_repos:
+            self.view.find_branch_repos(key)
+
+    def add_repo(self, identity):
+        store = self.view.store
+        if not store.repo(self.task):
+            self.task["repo"] = identity
+            store.save()
+        else:
+            self.set_extras([*store.extra_repos(self.task), identity])
+            return
+        self.rebuild_context()
+
+    def set_extras(self, repos):
+        self.view.store.set_extra_repos(self.task, repos)
+        self.rebuild_context()
 
     def rebuild_notes(self):
         while child := self.notes.get_first_child():
@@ -337,6 +389,7 @@ class TaskDialog(Gtk.Window):
                               xalign=0, hexpand=True, css_classes=["subtasks-head"]))
         if self.view.store.is_root(self.task) and self.view.store.repo(self.task):
             head.append(self.view.plan_button(self.task))
+            head.append(self.view.run_button(self.task))
         head.append(self.view.claude_button(self.task))
         self.subtasks.append(head)
         for child in children:
@@ -435,10 +488,10 @@ class RepoDialog(Gtk.Window):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=16, margin_bottom=16,
                       margin_start=16, margin_end=16)
         box.append(Gtk.Label(label=f"Default git repo for tasks in “{project['name']}”", xalign=0, wrap=True))
-        repos = [None, *list_repos()]
+        repos = [None, *identities()]
         if project.get("repo") and project["repo"] not in repos:
             repos.append(project["repo"])
-        picker = Gtk.DropDown.new_from_strings(["No repo", *map(repo_name, repos[1:])])
+        picker = Gtk.DropDown.new_from_strings(["No repo", *map(display, repos[1:])])
         picker.set_selected(repos.index(project.get("repo")))
         box.append(picker)
         buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END)
@@ -487,6 +540,10 @@ class TasksView(Gtk.Paned):
         self.store.on_external = lambda: GLib.idle_add(self.on_store_merged)
         self.dialogs = set()
         self.planning = set()
+        self.preparing = set()
+        self.branch_repos = {}
+        self.run_status = {}
+        self.show_run = None
         self.syncing = False
         self.disk_timer = 0
         self.monitor = Gio.File.new_for_path(os.path.dirname(TASKS_FILE)).monitor_directory(
@@ -504,11 +561,15 @@ class TasksView(Gtk.Paned):
         self.nav.connect("row-selected", self.on_nav_selected)
         scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
         scroller.set_child(self.nav)
+        self.jira_button = Gtk.Button(label="⬇  My Jira cards", css_classes=["flat", "sync-button"],
+                                      tooltip_text="Bring the Jira cards assigned to you as tasks")
+        self.jira_button.connect("clicked", lambda _b: self.import_jira())
         self.sync_button = Gtk.Button(label="⟳  Sync with Todoist", css_classes=["flat", "sync-button"])
         self.sync_button.connect("clicked", lambda _b: self.start_sync())
         self.update_sync_tooltip()
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["sidebar"], width_request=200)
         sidebar.append(scroller)
+        sidebar.append(self.jira_button)
         sidebar.append(self.sync_button)
         return sidebar
 
@@ -625,6 +686,7 @@ class TasksView(Gtk.Paned):
             self.rebuild_list()
 
     def reload(self):
+        self.run_status = {r["task_id"]: r for r in runs.read_runs()}
         self.rebuild_sidebar()
         self.rebuild_list()
 
@@ -983,6 +1045,11 @@ class TasksView(Gtk.Paned):
             meta.append(link)
         if task["id"] in self.planning:
             meta.append(Gtk.Label(label="⏳ planning…", css_classes=["task-meta", "due-week"]))
+        run = self.run_status.get(task["id"])
+        if task["id"] in self.preparing:
+            meta.append(Gtk.Label(label="🌳 preparing workspace…", css_classes=["task-meta", "due-week"]))
+        elif run and run["status"] in ("queued", "running", "needs_input", "review"):
+            meta.append(Gtk.Label(label=runs.STATUS_LABELS[run["status"]], css_classes=["task-meta", "due-week"]))
         children = self.store.children(task)
         if children:
             done = sum(c["done"] for c in children)
@@ -1094,6 +1161,115 @@ class TasksView(Gtk.Paned):
         GLib.idle_add(lambda: (self.reload(), False)[1])
         return True
 
+    def run_button(self, task):
+        run = self.run_status.get(task["id"])
+        if task["id"] in self.preparing:
+            button = Gtk.Button(label="🌳 Preparing…", sensitive=False, css_classes=["flat", "plan-button"])
+        elif run and run["status"] in ("queued", "running", "needs_input", "review"):
+            button = Gtk.Button(label=runs.STATUS_LABELS[run["status"]], css_classes=["flat", "plan-button"],
+                                tooltip_text="Open this run in the Agents tab")
+            button.connect("clicked", lambda _b: self.show_run and self.show_run(run["id"]))
+        else:
+            button = Gtk.Button(label="▶ Run", css_classes=["flat", "plan-button"],
+                                tooltip_text=f"Let a {runs.RUN_MODEL.capitalize()} agent do this task alone in worktrees")
+            button.connect("clicked", lambda _b: self.confirm_run(task))
+        return button
+
+    def run_branch(self, task):
+        key = jira_key(task)
+        title = JIRA_KEY.sub("", task["title"])
+        return (key or f"task-{short_id(task)}"), f"{(key or 'task-' + short_id(task)).lower()}-{slugify(title)}"
+
+    def confirm_run(self, task):
+        workspace, branch = self.run_branch(task)
+        repos = [r for r in [self.store.repo(task), *self.store.extra_repos(task)] if r]
+        detail = (f"It works alone in worktrees on branch {branch} ({', '.join(map(display, repos))}), "
+                  f"up to {runs.RUN_MINUTES} min with {runs.RUN_MODEL.capitalize()}. It can edit, test and commit "
+                  "locally. Push, PRs, deploys and production are blocked; staging writes wait for your approval. "
+                  "Each run spends quota (a Plan cost about $0.18; a Run costs more).")
+        dialog = Gtk.AlertDialog(message=f"Run an agent on “{task['title']}”?", detail=detail,
+                                 buttons=["Cancel", "Run"], cancel_button=0, default_button=1, modal=True)
+
+        def finish(source, result):
+            try:
+                if source.choose_finish(result) == 1:
+                    self.start_run(task, workspace, branch, repos)
+            except GLib.Error:
+                pass
+
+        dialog.choose(self.get_root(), None, finish)
+
+    def start_run(self, task, workspace, branch, repos):
+        self.preparing.add(task["id"])
+        self.reload()
+        self.refresh_dialogs()
+
+        def prepare():
+            try:
+                entries, error = [create_worktree(r, workspace, branch) for r in repos], None
+            except RepoError as exc:
+                entries, error = None, str(exc)
+            GLib.idle_add(self.queue_run, task, entries, error)
+
+        threading.Thread(target=prepare, daemon=True).start()
+
+    def queue_run(self, task, entries, error):
+        self.preparing.discard(task["id"])
+        if error:
+            Gtk.AlertDialog(message="Could not prepare the workspace", detail=error, modal=True).show(self.get_root())
+        else:
+            self.store.set_workspace(task, entries)
+            run = runs.create(task, jira_key(task), entries, claude_prompt(self.store, task, autonomous=True))
+            if self.show_run:
+                self.show_run(run["id"])
+        self.reload()
+        self.refresh_dialogs()
+        return False
+
+    def import_jira(self):
+        self.jira_button.set_label("Fetching…")
+        self.jira_button.set_sensitive(False)
+
+        def fetch():
+            try:
+                cards, error = jira_mine(), None
+            except PlanError as exc:
+                cards, error = [], str(exc)
+            GLib.idle_add(self.add_jira_cards, cards, error)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def add_jira_cards(self, cards, error):
+        self.jira_button.set_sensitive(True)
+        known = {jira_key(t) for t in self.store.tasks}
+        project = self.view[1] if self.view[0] == "project" else INBOX
+        added = []
+        for key, status, summary in cards:
+            if key not in known:
+                task = self.store.add_task(f"{key} {summary}", f"Jira: {status}", project=project)
+                added.append(task)
+        self.jira_button.set_label("⚠  Jira failed" if error else f"⬇  My Jira cards (+{len(added)})")
+        self.jira_button.set_tooltip_text(error or f"{len(cards)} open cards assigned to you; {len(added)} new")
+        self.reload()
+        if added:
+            threading.Thread(target=self.suggest_repos, args=(added,), daemon=True).start()
+        return False
+
+    def suggest_repos(self, tasks):
+        found = {t["id"]: repos_with_branch(jira_key(t)) for t in tasks}
+        GLib.idle_add(self.apply_suggested_repos, found)
+
+    def apply_suggested_repos(self, found):
+        for task_id, repos in found.items():
+            task = self.store.find_task(task_id)
+            if task and repos and not task.get("repo"):
+                task["repo"] = repos[0]
+                if repos[1:]:
+                    task["extra_repos"] = repos[1:]
+        self.store.save()
+        self.reload()
+        return False
+
     def plan_button(self, task):
         busy = task["id"] in self.planning
         button = Gtk.Button(label="⏳ Planning…" if busy else "✨ Plan", sensitive=not busy,
@@ -1103,15 +1279,25 @@ class TasksView(Gtk.Paned):
         return button
 
     def start_plan(self, task):
-        repo = self.store.repo(task)
+        paths = self.store.repo_paths(task)
         self.planning.add(task["id"])
         self.reload()
         self.refresh_dialogs()
-        threading.Thread(target=self.run_plan, args=(task, repo), daemon=True).start()
+        threading.Thread(target=self.run_plan, args=(task, paths), daemon=True).start()
 
-    def run_plan(self, task, repo):
+    def find_branch_repos(self, key):
+        self.branch_repos[key] = []
+        threading.Thread(target=lambda: GLib.idle_add(self.found_branch_repos, key, repos_with_branch(key)),
+                         daemon=True).start()
+
+    def found_branch_repos(self, key, repos):
+        self.branch_repos[key] = repos
+        self.refresh_dialogs()
+        return False
+
+    def run_plan(self, task, paths):
         try:
-            plan, error = run_plan(plan_prompt(self.store, task), repo), None
+            plan, error = run_plan(plan_prompt(self.store, task), paths), None
         except PlanError as exc:
             plan, error = None, str(exc)
         except Exception as exc:  # noqa: BLE001

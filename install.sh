@@ -48,6 +48,11 @@ install -Dm644 workstation_retro.py "$LIB/workstation_retro.py"
 install -Dm644 workstation_todoist.py "$LIB/workstation_todoist.py"
 install -Dm644 workstation_store.py "$LIB/workstation_store.py"
 install -Dm644 workstation_agent.py "$LIB/workstation_agent.py"
+install -Dm644 workstation_repos.py "$LIB/workstation_repos.py"
+install -Dm644 workstation_runs.py "$LIB/workstation_runs.py"
+install -Dm644 workstation_agents.py "$LIB/workstation_agents.py"
+install -Dm755 workstation_agentd.py "$LIB/workstation_agentd.py"
+install -Dm755 workstation_hook.py "$LIB/workstation_hook.py"
 mkdir -p "$HOME/.local/bin"
 ln -sf "$LIB/workstation.py" "$HOME/.local/bin/$SLUG"
 install -Dm644 fonts/VT323-Regular.ttf "$HOME/.local/share/fonts/$SLUG/VT323-Regular.ttf"
@@ -70,6 +75,27 @@ DESKTOP
 install -Dm644 panel-extension/metadata.json "$HOME/.local/share/gnome-shell/extensions/$EXT_UUID/metadata.json"
 install -Dm644 panel-extension/extension.js "$HOME/.local/share/gnome-shell/extensions/$EXT_UUID/extension.js"
 enable_extension
+
+install -Dm644 /dev/stdin "$HOME/.config/systemd/user/$SLUG-agentd.service" <<UNIT
+[Unit]
+Description=All-in-One Workstation agent runner (runs queued agent jobs one at a time)
+
+[Service]
+ExecStart=/usr/bin/python3 $LIB/workstation_agentd.py
+Environment=PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
+UNIT
+systemctl --user daemon-reload
+systemctl --user enable --now "$SLUG-agentd.service" >/dev/null 2>&1
+if grep -qE '"status": "(running|needs_input)"' "${XDG_STATE_HOME:-$HOME/.local/state}/$SLUG/runs.json" 2>/dev/null; then
+  echo "Um agente está rodando: o agentd será atualizado quando ele terminar (systemctl --user restart $SLUG-agentd)."
+else
+  systemctl --user restart "$SLUG-agentd.service"
+fi
 
 rm -f "$HOME/.cache/$SLUG/"*.wav
 gtk-update-icon-cache -q "$HOME/.local/share/icons/hicolor" 2>/dev/null || true

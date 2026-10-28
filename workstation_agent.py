@@ -43,6 +43,23 @@ def jira_text(key):
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def jira_mine():
+    if not os.access(JIRA_SCRIPT, os.X_OK):
+        raise PlanError(f"Jira script not found: {JIRA_SCRIPT}")
+    try:
+        result = subprocess.run([JIRA_SCRIPT, "mine"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PlanError(f"Could not reach Jira: {error}") from error
+    if result.returncode != 0:
+        raise PlanError((result.stderr or result.stdout).strip()[:300] or "jira.sh mine failed")
+    cards = []
+    for line in result.stdout.splitlines():
+        parts = [p.strip() for p in line.split(" | ", 2)]
+        if len(parts) == 3:
+            cards.append(tuple(parts))
+    return cards
+
+
 def plan_prompt(store, task):
     parts = [PLAN_INSTRUCTIONS, "", claude_prompt(store, task)]
     ticket = jira_text(jira_key(task))
@@ -66,16 +83,19 @@ def parse_plan(text):
     return subtasks, str(plan.get("context", "")).strip()
 
 
-def run_plan(prompt, repo):
+def run_plan(prompt, paths):
     claude = find_claude()
     if not claude:
         raise PlanError("Claude Code CLI not found (claude)")
-    if not os.path.isdir(repo):
-        raise PlanError(f"Repo folder not found: {repo}")
+    if not paths:
+        raise PlanError("No local clone found for the task's repos")
     command = [claude, "-p", "--model", PLAN_MODEL, "--output-format", "json",
                "--allowedTools", "Read,Grep,Glob", "--disallowedTools", "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"]
+    for extra in paths[1:]:
+        command += ["--add-dir", extra]
     try:
-        result = subprocess.run(command, input=prompt, cwd=repo, capture_output=True, text=True, timeout=PLAN_TIMEOUT)
+        result = subprocess.run(command, input=prompt, cwd=paths[0], capture_output=True, text=True,
+                                timeout=PLAN_TIMEOUT)
     except subprocess.TimeoutExpired as error:
         raise PlanError(f"The agent took more than {PLAN_TIMEOUT // 60} minutes") from error
     try:
