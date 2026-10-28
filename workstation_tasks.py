@@ -1,24 +1,22 @@
-import json
 import os
-import uuid
+import threading
 from calendar import monthrange
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
-from gi.repository import Gdk, GLib, GObject, Gtk, Pango  # noqa: E402
+from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
+from workstation_agent import PLAN_MODEL, PlanError, plan_prompt, run_plan  # noqa: E402
+
+from workstation_store import (DAY_NAMES, INBOX, JIRA_BROWSE, MONTH_NAMES, PROJECTS_DIR, TASKS_FILE,  # noqa: E402
+                               TaskStore, claude_prompt, due_of, jira_key, list_repos, short_date)
 from workstation_theme import ACCENT, BG_DARKER, GREEN, ORANGE, PURPLE, RED  # noqa: E402
+from workstation_todoist import Todoist, TodoistSync, load_token, save_token  # noqa: E402
 
-TASKS_FILE = os.path.join(GLib.get_user_config_dir(), "all-in-one-workstation", "tasks.json")
-INBOX = "inbox"
-PROJECT_COLORS = ["#db4035", "#ff9933", "#fad000", "#7ecc49", "#299438",
-                  "#14aaf5", "#4073ff", "#884dff", "#e05194", "#808080"]
-DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
 CALENDAR_VISIBLE = 3
-MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 WEEKDAY_WORDS = {
     "monday": 0, "mon": 0, "segunda": 0,
     "tuesday": 1, "tue": 1, "terça": 1, "terca": 1,
@@ -90,17 +88,17 @@ label.card-subtask {{ font-size: 12px; }}
 .cal-task.priority {{ background: alpha({RED}, 0.18); }}
 .task-list row.drop-before {{ box-shadow: inset 0 3px 0 0 {ACCENT}; }}
 .task-list row.drop-after {{ box-shadow: inset 0 -3px 0 0 {ACCENT}; }}
+.task-context {{ font-size: 13px; opacity: 0.8; }}
+.notes-head {{ font-weight: bold; font-size: 13px; margin-top: 4px; }}
+.task-note {{ font-size: 13px; padding: 6px 8px; border-radius: 6px; background: alpha(currentColor, 0.04); }}
+.task-note.claude {{ background: alpha({PURPLE}, 0.10); }}
+.task-note-meta {{ font-size: 11px; opacity: 0.6; }}
+.plan-button:disabled {{ opacity: 0.7; }}
+.plan-desc {{ font-size: 12px; opacity: 0.7; }}
+.plan-context {{ font-size: 12px; padding: 8px; border-radius: 6px; background: alpha({PURPLE}, 0.10); }}
+.sync-button {{ margin-top: 8px; font-size: 13px; }}
 .priority-toggle:checked {{ background: alpha({RED}, 0.22); color: {RED}; }}
 """
-
-
-def due_of(task):
-    return date.fromisoformat(task["due"]) if task["due"] else None
-
-
-def short_date(d):
-    text = f"{d.day} {MONTH_NAMES[d.month - 1]}"
-    return text if d.year == date.today().year else f"{text} {d.year}"
 
 
 def due_label(d):
@@ -116,63 +114,20 @@ def due_label(d):
     return short_date(d), "due-later"
 
 
-def day_heading(d):
-    text = f"{d.day} {MONTH_NAMES[d.month - 1]} · {DAY_NAMES[d.weekday()]}"
-    delta = (d - date.today()).days
-    if delta == 0:
-        return f"{text} · Today"
-    if delta == 1:
-        return f"{text} · Tomorrow"
-    return text
-
-
 def check_classes(task, *extra):
     return ["task-check", *extra, *(["priority"] if task["priority"] else [])]
 
 
+def repo_name(path):
+    if not path:
+        return None
+    path = path.rstrip("/")
+    return os.path.relpath(path, PROJECTS_DIR) if path.startswith(PROJECTS_DIR + os.sep) else os.path.basename(path)
+
+
 def title_markup(task):
-    escaped = GLib.markup_escape_text(task["title"])
+    escaped = ("🤖 " if task.get("by_claude") else "") + GLib.markup_escape_text(task["title"])
     return f'<span strikethrough="true" alpha="50%">{escaped}</span>' if task["done"] else escaped
-
-
-def plan_steps(store, task, depth=0):
-    lines = []
-    for child in store.children(task):
-        indent = "  " * depth
-        lines.append(f"{indent}- [{'x' if child['done'] else ' '}] {child['title']}")
-        if child["description"]:
-            lines.append(f"{indent}  {child['description']}")
-        lines += plan_steps(store, child, depth + 1)
-    return lines
-
-
-def claude_prompt(store, task):
-    details = [f"Projeto: {store.project(task['project'])['name']}"]
-    if task["priority"]:
-        details.append("Prioridade: alta")
-    if task["due"]:
-        details.append(f"Prazo: {task['due']}")
-    parts = [
-        "Abaixo está um plano de implementação que montei no meu gerenciador de tarefas. "
-        "A tarefa principal é o objetivo e as sub-tarefas são os passos, na ordem em que devem ser feitos "
-        "(sub-tarefas indentadas detalham o passo acima delas). Passos marcados com [x] já estão feitos.",
-        "",
-        "Como quero que você trabalhe:",
-        "1. Leia o plano inteiro e explore o código relevante antes de mudar qualquer coisa.",
-        "2. Se algo estiver ambíguo ou parecer errado, me pergunte antes de começar.",
-        "3. Execute os passos pendentes em ordem, um de cada vez, verificando cada um antes de seguir.",
-        "4. No fim, me diga o que foi feito em cada passo e o que ficou pendente.",
-        "",
-        "<plano>",
-        f"# {task['title']}",
-        " · ".join(details),
-    ]
-    if task["description"]:
-        parts += ["", task["description"]]
-    steps = plan_steps(store, task)
-    parts += ["", "## Passos", *steps] if steps else ["", "(Sem sub-tarefas: o objetivo acima é o plano todo.)"]
-    parts.append("</plano>")
-    return "\n".join(parts)
 
 
 def parse_quick(text, projects):
@@ -200,214 +155,6 @@ def parse_quick(text, projects):
     return " ".join(kept), due, priority, project
 
 
-class TaskStore:
-    def __init__(self):
-        self.data = {"projects": [{"id": INBOX, "name": "Inbox", "color": "#246fe0"}], "tasks": []}
-        try:
-            with open(TASKS_FILE) as f:
-                self.data.update(json.load(f))
-        except (OSError, ValueError):
-            pass
-        for task in self.tasks:
-            if not isinstance(task["priority"], bool):
-                task["priority"] = task["priority"] == 1
-
-    @property
-    def projects(self):
-        return self.data["projects"]
-
-    @property
-    def tasks(self):
-        return self.data["tasks"]
-
-    def save(self):
-        os.makedirs(os.path.dirname(TASKS_FILE), exist_ok=True)
-        tmp = TASKS_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(self.data, f, indent=2)
-        os.replace(tmp, TASKS_FILE)
-
-    def project(self, project_id):
-        return next((p for p in self.projects if p["id"] == project_id), self.projects[0])
-
-    def add_task(self, title, description="", due=None, priority=False, project=INBOX, section=None, parent=None):
-        parent_task = self.find_task(parent)
-        if parent_task:
-            project, section = parent_task["project"], None
-        task = {
-            "id": uuid.uuid4().hex,
-            "title": title,
-            "description": description,
-            "due": due.isoformat() if due else None,
-            "priority": priority,
-            "project": project,
-            "section": section,
-            "parent": parent_task["id"] if parent_task else None,
-            "done": False,
-            "done_at": None,
-            "created": datetime.now().isoformat(timespec="seconds"),
-        }
-        self.tasks.append(task)
-        self.save()
-        return task
-
-    def update_task(self, task, title, description, due, priority, project):
-        if project != task["project"]:
-            task.update(section=None, parent=None)
-            for child in self.descendants(task):
-                child["project"] = project
-        task.update(title=title, description=description, due=due.isoformat() if due else None,
-                    priority=priority, project=project)
-        self.save()
-
-    def set_priority(self, task, priority):
-        task["priority"] = priority
-        self.save()
-
-    def set_done(self, task, done):
-        # Completing a task completes its sub-tasks; reopening a sub-task reopens its parents.
-        stamp = datetime.now().isoformat(timespec="seconds") if done else None
-        for t in [task, *(self.descendants(task) if done else self.ancestors(task))]:
-            if t is task or t["done"] != done:
-                t.update(done=done, done_at=stamp)
-        self.save()
-
-    def children(self, task):
-        return sorted((t for t in self.tasks if t.get("parent") == task["id"]), key=lambda t: t["done"])
-
-    def descendants(self, task):
-        found = []
-        for child in self.children(task):
-            found += [child, *self.descendants(child)]
-        return found
-
-    def ancestors(self, task):
-        found = []
-        while task := self.find_task(task.get("parent")):
-            found.append(task)
-        return found
-
-    def is_root(self, task):
-        return self.find_task(task.get("parent")) is None
-
-    def sections(self, project):
-        return project.setdefault("sections", [])
-
-    def add_section(self, project, name):
-        self.sections(project).append({"id": uuid.uuid4().hex, "name": name})
-        self.save()
-
-    def rename_section(self, section, name):
-        section["name"] = name
-        self.save()
-
-    def delete_section(self, project, section):
-        self.sections(project).remove(section)
-        for t in self.tasks:
-            if t.get("section") == section["id"]:
-                t["section"] = None
-        self.save()
-
-    def move_to_section(self, task, section_id, before=None):
-        """Move a task into a section; it lands just before `before`, or at the end of the section."""
-        task["section"] = section_id
-        if before is not task:
-            self.tasks.remove(task)
-            self.tasks.insert(self.tasks.index(before) if before else len(self.tasks), task)
-        self.save()
-
-    def set_layout(self, project, layout):
-        project["layout"] = layout
-        self.save()
-
-    def next_in_section(self, task, skip):
-        siblings = [t for t in self.tasks if t is not skip and t["project"] == task["project"]
-                    and t.get("section") == task.get("section") and self.is_root(t)]
-        index = siblings.index(task) + 1
-        return siblings[index] if index < len(siblings) else None
-
-    def section_tasks(self, project_id, section_id, show_done):
-        selected = (t for t in self.tasks if t["project"] == project_id and t.get("section") == section_id
-                    and self.is_root(t) and (show_done or not t["done"]))
-        return sorted(selected, key=lambda t: t["done"])
-
-    def move_task(self, task, day):
-        task["due"] = day.isoformat()
-        self.save()
-
-    def find_task(self, task_id):
-        return next((t for t in self.tasks if t["id"] == task_id), None)
-
-    def tasks_on(self, day, show_done):
-        iso = day.isoformat()
-        selected = (t for t in self.tasks if t["due"] == iso and (show_done or not t["done"]))
-        return sorted(selected, key=lambda t: t["done"])
-
-    def delete_task(self, task):
-        doomed = {t["id"] for t in [task, *self.descendants(task)]}
-        self.data["tasks"] = [t for t in self.tasks if t["id"] not in doomed]
-        self.save()
-
-    def add_project(self, name):
-        color = PROJECT_COLORS[(len(self.projects) - 1) % len(PROJECT_COLORS)]
-        project = {"id": uuid.uuid4().hex, "name": name, "color": color}
-        self.projects.append(project)
-        self.save()
-        return project
-
-    def rename_project(self, project, name):
-        project["name"] = name
-        self.save()
-
-    def delete_project(self, project):
-        self.projects.remove(project)
-        self.data["tasks"] = [t for t in self.tasks if t["project"] != project["id"]]
-        self.save()
-
-    def matches(self, view, task):
-        kind, project_id = view
-        due = due_of(task)
-        if kind == "project":
-            return task["project"] == project_id
-        if kind == "today":
-            return due is not None and due <= date.today()
-        return due is not None
-
-    def open_count(self, view):
-        return sum(1 for t in self.tasks if not t["done"] and self.matches(view, t))
-
-    def groups(self, view, show_done):
-        today = date.today()
-        selected = [t for t in self.tasks if self.matches(view, t) and (view[0] != "project" or self.is_root(t))]
-        pending = [t for t in selected if not t["done"]]
-        by_due = sorted(pending, key=lambda t: (not t["priority"], t["due"] or "9999-12-31"))
-        groups = []
-        if view[0] == "project":
-            for section in [None, *self.sections(self.project(view[1]))]:
-                groups.append((section and section["name"],
-                               self.section_tasks(view[1], section and section["id"], False)))
-        else:
-            overdue = [t for t in by_due if due_of(t) < today]
-            if overdue:
-                groups.append(("Overdue", overdue))
-            if view[0] == "today":
-                groups.append((day_heading(today) if overdue else None,
-                               [t for t in by_due if due_of(t) == today]))
-            else:
-                for t in by_due:
-                    d = due_of(t)
-                    if d < today:
-                        continue
-                    if not groups or groups[-1][0] != day_heading(d):
-                        groups.append((day_heading(d), []))
-                    groups[-1][1].append(t)
-        if show_done:
-            done = sorted((t for t in selected if t["done"]), key=lambda t: t["done_at"] or "", reverse=True)
-            if done:
-                groups.append(("Completed", done))
-        return [(heading, tasks) for heading, tasks in groups if tasks]
-
-
 class TaskForm(Gtk.Box):
     def __init__(self, store, on_submit, on_cancel, submit_label="Add task"):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8, css_classes=["task-form"])
@@ -427,9 +174,13 @@ class TaskForm(Gtk.Box):
         self.due_button = Gtk.MenuButton(popover=self.build_due_popover())
         self.priority = Gtk.ToggleButton(label="🔥 Urgent", css_classes=["priority-toggle"])
         self.project = Gtk.DropDown()
+        self.repos = [None, *list_repos()]
+        self.repo = Gtk.DropDown.new_from_strings(["Repo: inherit", *map(repo_name, self.repos[1:])])
+        self.repo.set_tooltip_text("Git repo for this task (sub-tasks and the project default are inherited)")
         chips.append(self.due_button)
         chips.append(self.priority)
         chips.append(self.project)
+        chips.append(self.repo)
         self.append(chips)
 
         buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END)
@@ -475,7 +226,7 @@ class TaskForm(Gtk.Box):
         self.due_button.set_label(due_label(value)[0] if value else "Due date")
         self.popover.popdown()
 
-    def set_values(self, title="", description="", due=None, priority=False, project=INBOX):
+    def set_values(self, title="", description="", due=None, priority=False, project=INBOX, repo=None):
         self.title.set_text(title)
         self.description.set_text(description)
         self.set_due(due)
@@ -483,6 +234,10 @@ class TaskForm(Gtk.Box):
         self.project_ids = [p["id"] for p in self.store.projects]
         self.project.set_model(Gtk.StringList.new([p["name"] for p in self.store.projects]))
         self.project.set_selected(self.project_ids.index(project) if project in self.project_ids else 0)
+        if repo and repo not in self.repos:
+            self.repos.append(repo)
+            self.repo.get_model().append(repo_name(repo))
+        self.repo.set_selected(self.repos.index(repo))
         self.title.grab_focus()
 
     def submit(self):
@@ -496,6 +251,7 @@ class TaskForm(Gtk.Box):
             "due": due or self.due,
             "priority": priority or self.priority.get_active(),
             "project": project or self.project_ids[self.project.get_selected()],
+            "repo": self.repos[self.repo.get_selected()],
         })
 
 
@@ -513,16 +269,63 @@ class TaskDialog(Gtk.Window):
                       margin_start=14, margin_end=14)
         form = TaskForm(view.store, self.save, self.close, submit_label="Save" if task else "Add task")
         if task:
-            form.set_values(task["title"], task["description"], due_of(task), task["priority"], task["project"])
+            form.set_values(task["title"], task["description"], due_of(task), task["priority"], task["project"],
+                            task.get("repo"))
         else:
             form.set_values(due=due, project=parent["project"] if parent else project)
         form.project.set_sensitive(not parent and not (task and not view.store.is_root(task)))
         box.append(form)
         if task:
+            self.context = Gtk.Label(xalign=0, wrap=True, css_classes=["task-context"])
+            box.append(self.context)
             self.subtasks = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             box.append(self.subtasks)
+            self.notes = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            box.append(self.notes)
             self.rebuild_subtasks()
+            view.dialogs.add(self)
+            self.connect("close-request", lambda _w: view.dialogs.discard(self) or False)
         self.set_child(box)
+
+    def refresh(self):
+        if self.view.store.find_task(self.task["id"]) is not self.task:
+            self.close()
+            return
+        self.rebuild_subtasks()
+
+    def rebuild_context(self):
+        parts = []
+        repo = self.view.store.repo(self.task)
+        if repo:
+            inherited = "" if self.task.get("repo") else " (inherited)"
+            parts.append(f"📁 {GLib.markup_escape_text(repo_name(repo))}{inherited}")
+        key = jira_key(self.task)
+        if key:
+            parts.append(f'🔗 <a href="{JIRA_BROWSE}{key}">{key}</a>')
+        self.context.set_markup("   ·   ".join(parts))
+        self.context.set_visible(bool(parts))
+
+    def rebuild_notes(self):
+        while child := self.notes.get_first_child():
+            self.notes.remove(child)
+        self.notes.append(Gtk.Label(label="Notes", xalign=0, css_classes=["notes-head"]))
+        entry = Gtk.Entry(placeholder_text="Add a note and press Enter")
+        entry.connect("activate", self.on_note)
+        self.notes.append(entry)
+        for note in reversed(self.task.get("notes") or []):
+            claude = note["author"] == "claude"
+            card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                           css_classes=["task-note", *(["claude"] if claude else [])])
+            card.append(Gtk.Label(label=f"{'🤖 Claude' if claude else '📝 You'} · {note['at'].replace('T', ' ')[:16]}",
+                                  xalign=0, css_classes=["task-note-meta"]))
+            card.append(Gtk.Label(label=note["text"], xalign=0, wrap=True, selectable=True))
+            self.notes.append(card)
+
+    def on_note(self, entry):
+        text = entry.get_text().strip()
+        if text:
+            self.view.store.add_note(self.task, text)
+            self.rebuild_notes()
 
     def rebuild_subtasks(self):
         while child := self.subtasks.get_first_child():
@@ -532,6 +335,8 @@ class TaskDialog(Gtk.Window):
         head = Gtk.Box(spacing=8)
         head.append(Gtk.Label(label=f"Sub-tasks  {done}/{len(children)}" if children else "Sub-tasks",
                               xalign=0, hexpand=True, css_classes=["subtasks-head"]))
+        if self.view.store.is_root(self.task) and self.view.store.repo(self.task):
+            head.append(self.view.plan_button(self.task))
         head.append(self.view.claude_button(self.task))
         self.subtasks.append(head)
         for child in children:
@@ -551,6 +356,8 @@ class TaskDialog(Gtk.Window):
         add.connect("clicked", lambda _b: TaskDialog(self.view, parent=self.task, owner=self,
                                                      on_change=self.rebuild_subtasks).present())
         self.subtasks.append(add)
+        self.rebuild_context()
+        self.rebuild_notes()
 
     def on_check(self, check, child):
         self.view.store.set_done(child, check.get_active())
@@ -559,6 +366,7 @@ class TaskDialog(Gtk.Window):
 
     def save(self, values):
         if self.task:
+            self.view.dialogs.discard(self)
             self.view.store.update_task(self.task, **values)
         else:
             self.view.store.add_task(**values, section=self.section,
@@ -567,6 +375,81 @@ class TaskDialog(Gtk.Window):
         if self.on_change:
             self.on_change()
         self.close()
+
+
+class PlanDialog(Gtk.Window):
+    def __init__(self, view, task, plan):
+        super().__init__(title="Plan suggestions", transient_for=view.get_root(), modal=True, default_width=560,
+                         default_height=560)
+        self.view = view
+        self.task = task
+        self.plan = plan
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=14, margin_bottom=14,
+                      margin_start=14, margin_end=14)
+        box.append(Gtk.Label(label=f"🤖 Suggested sub-tasks for “{task['title']}”", xalign=0, wrap=True,
+                             css_classes=["subtasks-head"]))
+        items = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.checks = []
+        for suggestion in plan["subtasks"]:
+            check = Gtk.CheckButton(active=True)
+            text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            text.append(Gtk.Label(label=suggestion["title"], xalign=0, wrap=True))
+            if suggestion["description"]:
+                text.append(Gtk.Label(label=suggestion["description"], xalign=0, wrap=True, css_classes=["plan-desc"]))
+            check.set_child(text)
+            items.append(check)
+            self.checks.append((check, suggestion))
+        if plan["context"]:
+            items.append(Gtk.Label(label="Context (saved as a note)", xalign=0, css_classes=["notes-head"]))
+            items.append(Gtk.Label(label=plan["context"], xalign=0, wrap=True, selectable=True,
+                                   css_classes=["plan-context"]))
+        box.append(Gtk.ScrolledWindow(child=items, vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER))
+        buttons = Gtk.Box(spacing=8)
+        cost = f" · ${plan['cost']:.2f}" if isinstance(plan.get("cost"), (int, float)) else ""
+        buttons.append(Gtk.Label(label=f"{PLAN_MODEL.capitalize()}, read-only{cost}", xalign=0, hexpand=True,
+                                 css_classes=["task-note-meta"]))
+        cancel = Gtk.Button(label="Discard")
+        cancel.connect("clicked", lambda _b: self.close())
+        add = Gtk.Button(label="Add selected", css_classes=["suggested-action"])
+        add.connect("clicked", lambda _b: self.accept())
+        buttons.append(cancel)
+        buttons.append(add)
+        box.append(buttons)
+        self.set_child(box)
+
+    def accept(self):
+        store = self.view.store
+        for check, suggestion in self.checks:
+            if check.get_active():
+                store.add_task(suggestion["title"], suggestion["description"], parent=self.task["id"], by_claude=True)
+        if self.plan["context"]:
+            store.add_note(self.task, self.plan["context"], author="claude")
+        self.view.reload()
+        self.view.refresh_dialogs()
+        self.close()
+
+
+class RepoDialog(Gtk.Window):
+    def __init__(self, parent, project, on_submit):
+        super().__init__(title="Project repo", transient_for=parent, modal=True, default_width=360, resizable=False)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, margin_top=16, margin_bottom=16,
+                      margin_start=16, margin_end=16)
+        box.append(Gtk.Label(label=f"Default git repo for tasks in “{project['name']}”", xalign=0, wrap=True))
+        repos = [None, *list_repos()]
+        if project.get("repo") and project["repo"] not in repos:
+            repos.append(project["repo"])
+        picker = Gtk.DropDown.new_from_strings(["No repo", *map(repo_name, repos[1:])])
+        picker.set_selected(repos.index(project.get("repo")))
+        box.append(picker)
+        buttons = Gtk.Box(spacing=8, halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.connect("clicked", lambda _b: self.close())
+        ok = Gtk.Button(label="Save", css_classes=["suggested-action"])
+        ok.connect("clicked", lambda _b: (on_submit(repos[picker.get_selected()]), self.close()))
+        buttons.append(cancel)
+        buttons.append(ok)
+        box.append(buttons)
+        self.set_child(box)
 
 
 class NameDialog(Gtk.Window):
@@ -601,6 +484,14 @@ class TasksView(Gtk.Paned):
                          shrink_start_child=False, resize_start_child=False)
         self.on_focus = on_focus
         self.store = TaskStore()
+        self.store.on_external = lambda: GLib.idle_add(self.on_store_merged)
+        self.dialogs = set()
+        self.planning = set()
+        self.syncing = False
+        self.disk_timer = 0
+        self.monitor = Gio.File.new_for_path(os.path.dirname(TASKS_FILE)).monitor_directory(
+            Gio.FileMonitorFlags.WATCH_MOVES, None)
+        self.monitor.connect("changed", self.on_disk_event)
         self.view = ("project", INBOX)
         self.show_done = False
         self.cal_month = date.today().replace(day=1)
@@ -611,10 +502,50 @@ class TasksView(Gtk.Paned):
     def build_sidebar(self):
         self.nav = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.nav.connect("row-selected", self.on_nav_selected)
-        scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, css_classes=["sidebar"],
-                                      width_request=200)
+        scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
         scroller.set_child(self.nav)
-        return scroller
+        self.sync_button = Gtk.Button(label="⟳  Sync with Todoist", css_classes=["flat", "sync-button"])
+        self.sync_button.connect("clicked", lambda _b: self.start_sync())
+        self.update_sync_tooltip()
+        sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["sidebar"], width_request=200)
+        sidebar.append(scroller)
+        sidebar.append(self.sync_button)
+        return sidebar
+
+    def update_sync_tooltip(self, error=None):
+        synced_at = self.store.data.get("todoist_synced_at")
+        last = f"Last sync: {synced_at.replace('T', ' ')[:16]}" if synced_at else "Never synced"
+        self.sync_button.set_tooltip_text(f"{error}\n{last}" if error else last)
+        self.sync_button.set_label("⚠  Sync failed" if error else "⟳  Sync with Todoist")
+
+    def start_sync(self):
+        token = load_token()
+        if not token:
+            NameDialog(self.get_root(), "Todoist API token", "", lambda t: (save_token(t), self.start_sync()),
+                       "Todoist → Settings → Integrations → Developer").present()
+            return
+        self.set_sensitive(False)
+        self.syncing = True
+        self.sync_button.set_label("Syncing…")
+        threading.Thread(target=self.run_sync, args=(token,), daemon=True).start()
+
+    def run_sync(self, token):
+        try:
+            TodoistSync(self.store.data, Todoist(token)).run()
+            error = None
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+        GLib.idle_add(self.finish_sync, error)
+
+    def finish_sync(self, error):
+        self.syncing = False
+        self.store.save()
+        self.set_sensitive(True)
+        self.update_sync_tooltip(error)
+        if error and "token" in error.lower():
+            save_token("")
+        self.reload()
+        return False
 
     def build_content(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin_top=24, margin_bottom=24,
@@ -675,10 +606,10 @@ class TasksView(Gtk.Paned):
         return self.cal_nav
 
     def build_layout_toggle(self):
-        self.layout_toggle = Gtk.Box(css_classes=["linked"], margin_end=12)
+        self.layout_toggle = Gtk.Box(spacing=8, margin_end=24)
         self.layout_buttons = {}
         group = None
-        for layout, label in (("list", "List"), ("board", "Board")):
+        for layout, label in (("list", "📋 List"), ("board", "🗂️ Board")):
             button = Gtk.ToggleButton(label=label, group=group)
             button.connect("toggled", self.on_layout, layout)
             group = group or button
@@ -751,7 +682,9 @@ class TasksView(Gtk.Paned):
                                lambda name: (self.store.rename_project(project, name), self.reload())).present(),
             lambda: self.confirm(f"Delete “{project['name']}”?",
                                  "This will permanently delete the project and all its tasks.",
-                                 lambda: (self.store.delete_project(project), self.reload())))
+                                 lambda: (self.store.delete_project(project), self.reload())),
+            ("Repo…", lambda: RepoDialog(self.get_root(), project,
+                                         lambda repo: self.store.set_project_repo(project, repo)).present()))
 
     def section_menu(self, project, section):
         return self.item_menu(
@@ -760,10 +693,11 @@ class TasksView(Gtk.Paned):
                                "Section name").present(),
             lambda: (self.store.delete_section(project, section), self.reload()))
 
-    def item_menu(self, on_rename, on_delete):
+    def item_menu(self, on_rename, on_delete, *extra):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         popover = Gtk.Popover(child=box)
         for label, css, action in (("Rename", ["flat"], on_rename),
+                                   *((label, ["flat"], action) for label, action in extra),
                                    ("Delete", ["flat", "destructive-action"], on_delete)):
             button = Gtk.Button(label=label, css_classes=css)
             button.connect("clicked", lambda _b, a=action: (popover.popdown(), a()))
@@ -818,7 +752,10 @@ class TasksView(Gtk.Paned):
         project = self.store.project(self.view[1])
         while child := self.board.get_first_child():
             self.board.remove(child)
-        for section in [None, *self.store.sections(project)]:
+        sections = self.store.sections(project)
+        if sections:
+            self.store.adopt_loose_tasks(project)
+        for section in sections or [None]:
             self.board.append(self.board_column(project, section))
         add = Gtk.Button(label="+  Add section", css_classes=["flat", "add-task"], valign=Gtk.Align.START)
         add.connect("clicked", lambda _b: NameDialog(
@@ -1039,6 +976,13 @@ class TasksView(Gtk.Paned):
         if due:
             label, css = due_label(due)
             meta.append(Gtk.Label(label=f"\U0001F4C5 {label}", css_classes=["task-meta", css]))
+        key = jira_key(task)
+        if key:
+            link = Gtk.Label(css_classes=["task-meta", "due-later"])
+            link.set_markup(f'<a href="{JIRA_BROWSE}{key}">{key}</a>')
+            meta.append(link)
+        if task["id"] in self.planning:
+            meta.append(Gtk.Label(label="⏳ planning…", css_classes=["task-meta", "due-week"]))
         children = self.store.children(task)
         if children:
             done = sum(c["done"] for c in children)
@@ -1149,6 +1093,69 @@ class TasksView(Gtk.Paned):
         self.store.move_to_section(task, anchor.get("section"), before)
         GLib.idle_add(lambda: (self.reload(), False)[1])
         return True
+
+    def plan_button(self, task):
+        busy = task["id"] in self.planning
+        button = Gtk.Button(label="⏳ Planning…" if busy else "✨ Plan", sensitive=not busy,
+                            tooltip_text=f"Ask a read-only {PLAN_MODEL.capitalize()} agent to suggest sub-tasks",
+                            css_classes=["flat", "plan-button"])
+        button.connect("clicked", lambda _b: self.start_plan(task))
+        return button
+
+    def start_plan(self, task):
+        repo = self.store.repo(task)
+        self.planning.add(task["id"])
+        self.reload()
+        self.refresh_dialogs()
+        threading.Thread(target=self.run_plan, args=(task, repo), daemon=True).start()
+
+    def run_plan(self, task, repo):
+        try:
+            plan, error = run_plan(plan_prompt(self.store, task), repo), None
+        except PlanError as exc:
+            plan, error = None, str(exc)
+        except Exception as exc:  # noqa: BLE001
+            plan, error = None, f"Unexpected error: {exc}"
+        GLib.idle_add(self.finish_plan, task, plan, error)
+
+    def finish_plan(self, task, plan, error):
+        self.planning.discard(task["id"])
+        self.reload()
+        self.refresh_dialogs()
+        app = self.get_root().get_application() if self.get_root() else None
+        if app:
+            note = Gio.Notification.new("Plan failed" if error else "Plan ready")
+            note.set_body(f"{task['title']}: {error}" if error else
+                          f"{len(plan['subtasks'])} sub-tasks suggested for “{task['title']}”")
+            app.send_notification(f"plan-{task['id']}", note)
+        if error:
+            Gtk.AlertDialog(message="The plan agent failed", detail=error, modal=True).show(self.get_root())
+        else:
+            PlanDialog(self, task, plan).present()
+        return False
+
+    def refresh_dialogs(self):
+        for dialog in list(self.dialogs):
+            dialog.refresh()
+
+    def on_disk_event(self, _monitor, file, other, _event):
+        names = {f.get_basename() for f in (file, other) if f}
+        if os.path.basename(TASKS_FILE) not in names:
+            return
+        if self.disk_timer:
+            GLib.source_remove(self.disk_timer)
+        self.disk_timer = GLib.timeout_add(300, self.on_disk_changed)
+
+    def on_disk_changed(self):
+        self.disk_timer = 0
+        if not self.syncing and self.store.refresh():
+            self.on_store_merged()
+        return False
+
+    def on_store_merged(self):
+        self.reload()
+        self.refresh_dialogs()
+        return False
 
     def claude_button(self, task):
         button = Gtk.Button(label="🤖", tooltip_text="Copy as an implementation plan for Claude",

@@ -87,4 +87,5 @@ list, listview, textview, textview text {{ background: transparent; color: {FG};
 entry.log-desc {{ background: transparent; border-color: transparent; }}
 entry.log-desc:hover {{ background: alpha({FG}, 0.04); }}
 entry.log-desc:focus-within {{ background: {BG_DARK}; border-color: {PURPLE}; }}
+entry.log-desc.saved {{ border-color: {GREEN}; transition: border-color 200ms; }}
 """

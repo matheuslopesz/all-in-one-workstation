@@ -12,7 +12,11 @@ import time
 import wave
 from datetime import date, datetime, timedelta
 
-import gi
+if __name__ == "__main__" and sys.argv[1:2] == ["task"]:
+    from workstation_store import cli
+    sys.exit(cli(sys.argv[2:]))
+
+import gi  # noqa: E402
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
@@ -911,12 +915,19 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         description = Gtk.Entry(text=entry["description"], placeholder_text=placeholder, hexpand=True,
                                 css_classes=["log-desc"])
         description.connect("changed", self.on_description_changed, entry)
+        description.connect("activate", self.on_description_saved)
         row.append(description)
         return row
 
     def on_description_changed(self, field, entry):
         entry["description"] = field.get_text()
         self.store.save()
+
+    def on_description_saved(self, field):
+        self.store.save()
+        self.set_focus(None)
+        field.add_css_class("saved")
+        GLib.timeout_add(900, lambda: (field.remove_css_class("saved"), False)[1])
 
     def refresh(self):
         seconds = math.ceil(self.remaining)

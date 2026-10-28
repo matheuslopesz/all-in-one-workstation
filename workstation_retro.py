@@ -158,6 +158,7 @@ entry.note-title {{ font-family: "{RETRO_FONT}"; font-size: 38px; font-weight: n
 .log-day-meta {{ font-family: "{RETRO_FONT}"; font-size: 16px; }}
 entry.log-desc {{ background: transparent; box-shadow: none; border-color: transparent; }}
 entry.log-desc:focus-within {{ background: #0f0722; box-shadow: inset 1px 1px {BLACK}, 0 0 0 1px {CYAN}; }}
+entry.log-desc.saved {{ box-shadow: inset 1px 1px {BLACK}, 0 0 0 1px #39ff14; }}
 
 .boot {{ background: {BLACK}; padding: 28px 34px; }}
 .boot label {{ font-family: "{RETRO_FONT}"; font-size: 22px; color: #d8d0e8; }}

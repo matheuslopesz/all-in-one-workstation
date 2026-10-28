@@ -23,6 +23,8 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 - **Notes**: editor de texto visual com barra de ferramentas (títulos, negrito, itálico, sublinhado, riscado, destaque, código, listas e checklist), sem precisar escrever Markdown. Por baixo, cada nota é salva como `.md` em `~/Documentos/Workstation Notes`
 - **Notas do Claude**: arquivos `.md` que o Claude grava em `~/Documentos/Workstation Notes/Claude` aparecem sozinhos na aba Notes, agrupados por tema (cada subpasta vira um grupo 🤖), somente leitura (tabelas alinhadas). Notas editadas fora do app também recarregam sozinhas
 - **Abas opcionais**: em Options → Tabs dá para esconder as abas Tasks e Notes (o Timer fica sempre visível)
+- **Tasks + Claude**: cada task pode ter um repo (ou herdar o do projeto) e o ticket do Jira é detectado no título ou na descrição. O 🤖 copia o plano com os ids, e o Claude dá notícias pela CLI (`all-in-one-workstation task show|done|note|add <id>`); o app recarrega sozinho. O botão **✨ Plan** pede a um agente Sonnet só leitura uma sugestão de sub-tasks
+- **Todoist**: o botão **⟳ Sync with Todoist** sincroniza projetos, seções e tasks nos dois sentidos (Urgent = P1)
 - **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
 ## Atalhos

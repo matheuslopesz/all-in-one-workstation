@@ -1,5 +1,7 @@
+import html
 import os
 import re
+from html.parser import HTMLParser
 
 import gi
 
@@ -12,6 +14,11 @@ from workstation_theme import ACCENT, GREEN, PURPLE  # noqa: E402
 NOTES_DIR = os.path.join(GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOCUMENTS) or GLib.get_home_dir(),
                          "Workstation Notes")
 CLAUDE_FOLDER = "Claude"
+HTML_SUFFIX = ".html"
+HTML_INLINE = {"b": "**", "strong": "**", "i": "_", "em": "_", "s": "~~", "del": "~~", "strike": "~~",
+               "u": ("<u>", "</u>"), "code": "`"}
+HTML_SKIP = {"head", "style", "script", "title", "template", "svg"}
+HTML_BREAKS = {"p", "div", "section", "article", "header", "footer", "main", "nav", "aside", "figure", "dd", "dt"}
 INLINE = ["bold", "italic", "underline", "strike", "mark", "code"]
 BLOCKS = ["h1", "h2", "h3", "quote", "codeblock", "table"]
 LISTS = ["bullet", "numbered", "check"]
@@ -237,7 +244,193 @@ def line_markdown(block, marker, segments):
     return prefix + body
 
 
-def preview_of(text):
+class HtmlToMarkdown(HTMLParser):
+    """Turns an HTML note into the Markdown the reader already renders (headings, emphasis, lists, tables)."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.lines, self.line, self.pending = [], "", []
+        self.skip = self.quote = 0
+        self.pre = False
+        self.lists, self.links = [], []
+        self.rows = self.row = self.cell = None
+
+    def write(self, text):
+        if self.cell is not None:
+            self.cell += text
+        else:
+            self.line += text
+
+    def target(self):
+        return self.cell if self.cell is not None else self.line
+
+    def newline(self):
+        if self.line.strip():
+            self.lines.append("> " * self.quote + self.line.rstrip())
+        self.line = ""
+
+    def blank(self):
+        self.newline()
+        if self.lines and self.lines[-1] != "":
+            self.lines.append("")
+
+    def open_mark(self, mark):
+        self.pending.append(mark)
+
+    def close_mark(self, mark):
+        if mark in self.pending:
+            self.pending.remove(mark)
+            return
+        text = self.target()
+        trailing = text[len(text.rstrip()):]
+        if self.cell is not None:
+            self.cell = self.cell.rstrip() + mark + trailing
+        else:
+            self.line = self.line.rstrip() + mark + trailing
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag in HTML_SKIP:
+            self.skip += 1
+        elif self.skip:
+            return
+        elif re.fullmatch(r"h[1-6]", tag):
+            self.blank()
+            self.write("#" * min(int(tag[1]), 3) + " ")
+        elif tag in HTML_BREAKS:
+            self.newline()
+        elif tag == "br":
+            self.write(" ") if self.cell is not None else self.newline()
+        elif tag in HTML_INLINE and not (tag == "code" and self.pre):
+            mark = HTML_INLINE[tag]
+            self.open_mark(mark[0] if isinstance(mark, tuple) else mark)
+        elif tag == "pre":
+            self.blank()
+            self.lines.append("```")
+            self.pre = True
+        elif tag == "a":
+            href = attrs.get("href") or ""
+            self.links.append(href if href.startswith(("http", "mailto:")) else None)
+            if self.links[-1]:
+                self.open_mark("[")
+        elif tag in ("ul", "ol"):
+            self.newline()
+            self.lists.append([tag, 0])
+        elif tag == "li":
+            self.newline()
+            kind = self.lists[-1] if self.lists else ["ul", 0]
+            kind[1] += 1
+            marker = f"{kind[1]}. " if kind[0] == "ol" else "- "
+            self.write("  " * max(len(self.lists) - 1, 0) + marker)
+        elif tag == "table":
+            self.blank()
+            self.rows = []
+        elif tag == "tr" and self.rows is not None:
+            self.row = []
+        elif tag in ("td", "th") and self.row is not None:
+            self.cell = ""
+        elif tag == "blockquote":
+            self.newline()
+            self.quote += 1
+        elif tag == "hr":
+            self.blank()
+            self.lines += ["---", ""]
+        elif tag == "img" and attrs.get("alt"):
+            self.write(f"[{escape(attrs['alt'])}]")
+
+    def handle_endtag(self, tag):
+        if tag in HTML_SKIP:
+            self.skip = max(self.skip - 1, 0)
+        elif self.skip:
+            return
+        elif re.fullmatch(r"h[1-6]", tag):
+            self.blank()
+        elif tag in HTML_BREAKS:
+            self.newline()
+        elif tag in HTML_INLINE and not (tag == "code" and self.pre):
+            mark = HTML_INLINE[tag]
+            self.close_mark(mark[1] if isinstance(mark, tuple) else mark)
+        elif tag == "pre" and self.pre:
+            self.lines.append(self.line)
+            self.line = ""
+            self.lines += ["```", ""]
+            self.pre = False
+        elif tag == "a" and self.links:
+            href = self.links.pop()
+            if href:
+                if "[" in self.pending:
+                    self.pending.remove("[")
+                else:
+                    self.close_mark(f"]({href})")
+        elif tag in ("ul", "ol") and self.lists:
+            self.lists.pop()
+            self.newline()
+            if not self.lists:
+                self.blank()
+        elif tag == "li":
+            self.newline()
+        elif tag in ("td", "th") and self.cell is not None:
+            self.row.append(self.cell.strip().replace("|", "\\|") or " ")
+            self.cell = None
+        elif tag == "tr" and self.row is not None:
+            if self.row:
+                self.rows.append(self.row)
+            self.row = None
+        elif tag == "table" and self.rows is not None:
+            width = max((len(r) for r in self.rows), default=0)
+            for index, row in enumerate(self.rows):
+                self.lines.append("| " + " | ".join(row + [" "] * (width - len(row))) + " |")
+                if index == 0:
+                    self.lines.append("|" + "---|" * width)
+            self.rows = None
+            self.blank()
+        elif tag == "blockquote":
+            self.newline()
+            self.quote = max(self.quote - 1, 0)
+
+    def handle_data(self, data):
+        if self.skip:
+            return
+        if self.pre:
+            parts = data.split("\n")
+            for part in parts[:-1]:
+                self.lines.append(self.line + part)
+                self.line = ""
+            self.line += parts[-1]
+            return
+        text = re.sub(r"\s+", " ", data)
+        if not self.target().strip() or self.target().endswith(" "):
+            text = text.lstrip()
+        if not text:
+            return
+        if self.pending and text.strip():
+            lead = text[:len(text) - len(text.lstrip())]
+            self.write(lead + "".join(self.pending))
+            self.pending = []
+            text = text.lstrip()
+        self.write(escape(text))
+
+    def markdown(self):
+        self.newline()
+        return re.sub(r"\n{3,}", "\n\n", "\n".join(self.lines)).strip() + "\n"
+
+
+def html_to_markdown(text):
+    parser = HtmlToMarkdown()
+    parser.feed(text)
+    parser.close()
+    return parser.markdown()
+
+
+def html_text(text):
+    text = re.sub(r"(?is)<(head|style|script)\b.*?</\1>", " ", text)
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", text))).strip()
+
+
+def preview_of(text, is_html=False):
+    if is_html:
+        return html_text(text)[:120]
+
     for block, _marker, segments in parse_markdown(text):
         line = "".join(t for t, _tags in segments).strip()
         if line and block not in ("h1", "h2", "h3"):
@@ -253,18 +446,29 @@ class NoteStore:
         os.makedirs(os.path.join(NOTES_DIR, CLAUDE_FOLDER), exist_ok=True)
 
     def path(self, title):
-        return os.path.join(NOTES_DIR, f"{title}.md")
+        return os.path.join(NOTES_DIR, title if self.is_html(title) else f"{title}.md")
+
+    def is_html(self, title):
+        return title is not None and title.endswith(HTML_SUFFIX)
+
+    def is_read_only(self, title):
+        return self.is_claude(title) or self.is_html(title)
+
+    def name(self, title):
+        name = title.rsplit("/", 1)[-1]
+        return name[:-len(HTML_SUFFIX)] if self.is_html(title) else name
 
     def exists(self, title):
         return os.path.exists(self.path(title))
 
     def titles(self):
-        names = [n for n in os.listdir(NOTES_DIR) if n.endswith(".md")]
+        names = [n for n in os.listdir(NOTES_DIR) if n.endswith((".md", HTML_SUFFIX))]
         for folder in self.claude_folders():
             rel = os.path.relpath(folder, NOTES_DIR)
-            names += [f"{rel}/{n}" for n in os.listdir(folder) if n.endswith(".md")]
+            names += [f"{rel}/{n}" for n in os.listdir(folder) if n.endswith((".md", HTML_SUFFIX))]
+        names = [n for n in names if os.path.exists(os.path.join(NOTES_DIR, n))]
         names.sort(key=lambda n: os.path.getmtime(os.path.join(NOTES_DIR, n)), reverse=True)
-        return [n[:-3] for n in names]
+        return [n if n.endswith(HTML_SUFFIX) else n[:-3] for n in names]
 
     def claude_folders(self):
         return [root for root, _dirs, _files in os.walk(os.path.join(NOTES_DIR, CLAUDE_FOLDER))]
@@ -399,6 +603,10 @@ class NotesView(Gtk.Paned):
         focus.connect("leave", lambda _c: self.commit_title())
         self.title_entry.add_controller(focus)
         head.append(self.title_entry)
+        self.copy_button = Gtk.Button(label="Copy all", css_classes=["flat"], valign=Gtk.Align.CENTER,
+                                      tooltip_text="Copy the original HTML, with its formatting, to paste anywhere")
+        self.copy_button.connect("clicked", self.copy_html)
+        head.append(self.copy_button)
         head.append(self.note_menu())
         box.append(head)
         self.claude_banner = Gtk.Label(label="🤖 Written by Claude · read-only", xalign=0,
@@ -515,10 +723,11 @@ class NotesView(Gtk.Paned):
 
     def append_note_row(self, title):
         text = self.store.read(title)
+        is_html = self.store.is_html(title)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin_start=20)
-        box.append(Gtk.Label(label=title.rsplit("/", 1)[-1], xalign=0, ellipsize=Pango.EllipsizeMode.END,
-                             css_classes=["note-name"]))
-        preview = preview_of(text)
+        box.append(Gtk.Label(label=("🌐 " if is_html else "") + self.store.name(title), xalign=0,
+                             ellipsize=Pango.EllipsizeMode.END, css_classes=["note-name"]))
+        preview = preview_of(text, is_html)
         if preview:
             box.append(Gtk.Label(label=preview, xalign=0, ellipsize=Pango.EllipsizeMode.END,
                                  css_classes=["note-preview"]))
@@ -528,6 +737,16 @@ class NotesView(Gtk.Paned):
         if title == self.current:
             self.note_list.select_row(row)
 
+    def copy_html(self, button):
+        if not self.store.is_html(self.current):
+            return
+        source = self.store.read(self.current)
+        self.get_clipboard().set_content(Gdk.ContentProvider.new_union([
+            Gdk.ContentProvider.new_for_bytes("text/html", GLib.Bytes.new(source.encode())),
+            Gdk.ContentProvider.new_for_bytes("text/plain;charset=utf-8", GLib.Bytes.new(html_text(source).encode()))]))
+        button.set_label("Copied ✓")
+        GLib.timeout_add(1500, lambda: (button.set_label("Copy all"), False)[1])
+
     def open_note(self, title):
         self.flush()
         self.current = title
@@ -535,15 +754,19 @@ class NotesView(Gtk.Paned):
             self.pages.set_visible_child_name("empty")
             self.rebuild_list()
             return
-        claude = self.store.is_claude(title)
-        self.title_entry.set_text(title.rsplit("/", 1)[-1])
-        self.title_entry.set_editable(not claude)
-        self.body.set_editable(not claude)
-        self.body.set_cursor_visible(not claude)
-        self.toolbar.set_visible(not claude)
-        self.claude_banner.set_visible(claude)
+        read_only, is_html = self.store.is_read_only(title), self.store.is_html(title)
+        self.title_entry.set_text(self.store.name(title))
+        self.title_entry.set_editable(not read_only)
+        self.body.set_editable(not read_only)
+        self.body.set_cursor_visible(not read_only)
+        self.toolbar.set_visible(not read_only)
+        self.copy_button.set_visible(is_html)
+        self.claude_banner.set_label("🌐 HTML · read-only · Copy all keeps the original formatting" if is_html
+                                     else "🤖 Written by Claude · read-only")
+        self.claude_banner.set_visible(read_only)
         self.loaded_text = self.store.read(title)
-        self.load(readable_markdown(self.loaded_text) if claude else self.loaded_text, rich_tables=claude)
+        text = html_to_markdown(self.loaded_text) if is_html else self.loaded_text
+        self.load(readable_markdown(text) if read_only else text, rich_tables=read_only)
         self.pages.set_visible_child_name("editor")
         self.rebuild_list()
 
@@ -553,7 +776,7 @@ class NotesView(Gtk.Paned):
         self.title_entry.grab_focus()
 
     def commit_title(self):
-        if self.current is None or self.store.is_claude(self.current):
+        if self.current is None or self.store.is_read_only(self.current):
             return
         new = safe_title(self.title_entry.get_text())
         if not new or new == self.current or self.store.exists(new):
@@ -566,7 +789,7 @@ class NotesView(Gtk.Paned):
 
     def confirm_delete(self):
         title = self.current
-        dialog = Gtk.AlertDialog(message=f"Delete “{title}”?", detail="The note will be moved to the trash.",
+        dialog = Gtk.AlertDialog(message=f"Delete “{self.store.name(title)}”?", detail="The note will be moved to the trash.",
                                  buttons=["Cancel", "Delete"], cancel_button=0, default_button=1, modal=True)
 
         def finish(source, result):
@@ -675,7 +898,7 @@ class NotesView(Gtk.Paned):
         if self.save_id is None:
             return False
         self.save_id = None
-        if self.current is not None and self.buffer.get_modified() and not self.store.is_claude(self.current):
+        if self.current is not None and self.buffer.get_modified() and not self.store.is_read_only(self.current):
             self.loaded_text = self.to_markdown()
             self.store.write(self.current, self.loaded_text)
             self.buffer.set_modified(False)
