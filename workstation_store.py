@@ -8,11 +8,10 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, datetime
 
-from workstation_repos import display, local_path, to_identity
-
 CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config")), "all-in-one-workstation")
 TASKS_FILE = os.path.join(CONFIG_DIR, "tasks.json")
 LOCK_FILE = TASKS_FILE + ".lock"
+PROJECTS_DIR = os.path.expanduser("~/Área de trabalho/projetos")
 JIRA_BROWSE = "https://rdstation.atlassian.net/browse/"
 JIRA_KEY = re.compile(r"\b[A-Z][A-Z0-9]+-\d+\b")
 INBOX = "inbox"
@@ -50,6 +49,29 @@ def short_id(task):
 def jira_key(task):
     match = JIRA_KEY.search(task["title"]) or JIRA_KEY.search(task["description"] or "")
     return match.group(0) if match else None
+
+
+def is_repo(path):
+    return os.path.exists(os.path.join(path, ".git"))
+
+
+def child_dirs(path):
+    try:
+        names = sorted(os.listdir(path), key=str.lower)
+    except OSError:
+        return []
+    return [os.path.join(path, n) for n in names
+            if not n.startswith(".") and n != "node_modules" and os.path.isdir(os.path.join(path, n))]
+
+
+def list_repos():
+    repos = []
+    for path in child_dirs(PROJECTS_DIR):
+        if is_repo(path):
+            repos.append(path)
+        else:
+            repos.extend(child for child in child_dirs(path) if is_repo(child))
+    return repos
 
 
 def read_tasks_file():
@@ -133,47 +155,27 @@ def task_context(store, task):
         details.append("Prioridade: alta")
     if task["due"]:
         details.append(f"Prazo: {task['due']}")
-    workspace = store.workspace(task)
-    if workspace:
-        details += [f"Repo: {display(w['identity'])} em {w['path']} (branch {w['branch']})" for w in workspace]
-    else:
-        details += [f"Repo: {repo} em {local_path(repo) or '(sem clone local)'}"
-                    for repo in [store.repo(task), *store.extra_repos(task)] if repo]
+    repo = store.repo(task)
+    if repo:
+        details.append(f"Repo: {repo}")
     key = jira_key(task)
     if key:
         details.append(f"Jira: {JIRA_BROWSE}{key}")
     return details
 
 
-INTERACTIVE_RULES = [
-    "Como quero que você trabalhe:",
-    "1. Leia o plano inteiro e explore o código relevante antes de mudar qualquer coisa.",
-    "2. Se algo estiver ambíguo ou parecer errado, me pergunte antes de começar.",
-    "3. Execute os passos pendentes em ordem, um de cada vez, verificando cada um antes de seguir.",
-    "4. No fim, me diga o que foi feito em cada passo e o que ficou pendente.",
-]
-AUTONOMOUS_RULES = [
-    "Você está rodando sozinho, sem ninguém acompanhando, num worktree git isolado criado para esta tarefa.",
-    "Regras:",
-    "1. Trabalhe só nas pastas do workspace listadas no plano. Leia o plano inteiro e explore o código antes de mudar.",
-    "2. Pode editar, rodar testes e linters e fazer commits locais (Conventional Commits). Nunca adicione "
-    "Co-Authored-By, \"Generated with Claude\" nem qualquer trailer ou menção ao Claude nos commits.",
-    "3. Não faça push, não abra PR e não faça deploy: isso é do Matheus. Produção é proibida.",
-    "4. Leitura em staging é liberada. Escrita em staging pausa e pede aprovação; se for negada, "
-    "não tente por outro caminho.",
-    "5. Se travar numa decisão que só o Matheus pode tomar, registre com a nota da CLI e termine.",
-    "6. No fim, faça commit do que concluiu e responda com um resumo curto: o que mudou, como testou e o que falta.",
-]
-
-
-def claude_prompt(store, task, autonomous=False):
+def claude_prompt(store, task):
     task_id = short_id(task)
     parts = [
         "Abaixo está um plano de implementação que montei no meu gerenciador de tarefas. "
         "A tarefa principal é o objetivo e as sub-tarefas são os passos, na ordem em que devem ser feitos "
         "(sub-tarefas indentadas detalham o passo acima delas). Passos marcados com [x] já estão feitos.",
         "",
-        *(AUTONOMOUS_RULES if autonomous else INTERACTIVE_RULES),
+        "Como quero que você trabalhe:",
+        "1. Leia o plano inteiro e explore o código relevante antes de mudar qualquer coisa.",
+        "2. Se algo estiver ambíguo ou parecer errado, me pergunte antes de começar.",
+        "3. Execute os passos pendentes em ordem, um de cada vez, verificando cada um antes de seguir.",
+        "4. No fim, me diga o que foi feito em cada passo e o que ficou pendente.",
         "",
         "Como dar notícias (rode no terminal; o progresso aparece no meu app na hora):",
         f"- Ao terminar um passo: `{CLI} done <id>`",
@@ -200,16 +202,6 @@ class TaskStore:
         self.data.update(read_tasks_file() or {})
         self.base = copy.deepcopy(self.data)
         self.on_external = None
-        self.migrate_repo_paths()
-
-    def migrate_repo_paths(self):
-        changed = False
-        for item in [*self.projects, *self.tasks]:
-            if (item.get("repo") or "").startswith("/"):
-                item["repo"] = to_identity(item["repo"])
-                changed = True
-        if changed:
-            self.save()
 
     @property
     def projects(self):
@@ -249,35 +241,6 @@ class TaskStore:
             if t.get("repo"):
                 return t["repo"]
         return self.project(task["project"]).get("repo")
-
-    def extra_repos(self, task):
-        for t in [task, *self.ancestors(task)]:
-            if t.get("extra_repos"):
-                return [r for r in t["extra_repos"] if r != self.repo(task)]
-        return []
-
-    def repo_paths(self, task):
-        workspace = self.workspace(task)
-        if workspace:
-            return [w["path"] for w in workspace if os.path.isdir(w["path"])]
-        return [p for p in (local_path(r) for r in [self.repo(task), *self.extra_repos(task)] if r) if p]
-
-    def workspace(self, task):
-        for t in [task, *self.ancestors(task)]:
-            if t.get("workspace"):
-                return t["workspace"]
-        return None
-
-    def set_workspace(self, task, entries):
-        task["workspace"] = entries
-        self.save()
-
-    def set_extra_repos(self, task, repos):
-        if repos:
-            task["extra_repos"] = repos
-        else:
-            task.pop("extra_repos", None)
-        self.save()
 
     def add_task(self, title, description="", due=None, priority=False, project=INBOX, section=None, parent=None,
                  repo=None, by_claude=False):

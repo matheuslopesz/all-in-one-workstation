@@ -24,9 +24,6 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 - **Notas do Claude**: arquivos `.md` que o Claude grava em `~/Documentos/Workstation Notes/Claude` aparecem sozinhos na aba Notes, agrupados por tema (cada subpasta vira um grupo 🤖), somente leitura (tabelas alinhadas). Notas editadas fora do app também recarregam sozinhas
 - **Abas opcionais**: em Options → Tabs dá para esconder as abas Tasks e Notes (o Timer fica sempre visível)
 - **Tasks + Claude**: cada task pode ter um repo (ou herdar o do projeto) e o ticket do Jira é detectado no título ou na descrição. O 🤖 copia o plano com os ids, e o Claude dá notícias pela CLI (`all-in-one-workstation task show|done|note|add <id>`); o app recarrega sozinho. O botão **✨ Plan** pede a um agente Sonnet só leitura uma sugestão de sub-tasks
-- **Repos por identidade**: a task guarda o repo pelo remote (`org/nome`) e o app acha o clone local sozinho. Com a chave do Jira no título, o 💡 sugere os repos que têm branch com essa chave. Uma task pode ter um repo principal e extras (o ✨ Plan e o agente recebem todos)
-- **Agentes (▶ Run)**: o agente trabalha sozinho num worktree por repo, na branch `<chave>-<slug>`, rodando no serviço `all-in-one-workstation-agentd` (systemd do usuário, um por vez, Sonnet, até 45 min). Pode editar, testar e commitar localmente; push, PR, deploy e produção são bloqueados, e escrita em staging pausa até você aprovar na aba **Agents** (Alt+4), que mostra o log ao vivo, o diff e o custo
-- **Jira**: o botão **⬇ My Jira cards** traz os cards atribuídos a você como tasks, já com os repos sugeridos pelas branches
 - **Todoist**: o botão **⟳ Sync with Todoist** sincroniza projetos, seções e tasks nos dois sentidos (Urgent = P1)
 - **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
