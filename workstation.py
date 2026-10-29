@@ -736,11 +736,10 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         return box
 
     def build_chart(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.append(Gtk.Label(label="Pomodoros per week", xalign=0, css_classes=["section-title"]))
         self.week_chart = WeekChart()
-        box.append(self.week_chart)
-        return box
+        self.week_chart.set_margin_top(8)
+        title = Gtk.Label(label="Pomodoros per week", css_classes=["section-title"])
+        return Gtk.Expander(label_widget=title, child=self.week_chart, expanded=False)
 
     def build_log(self):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
