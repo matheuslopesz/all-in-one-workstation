@@ -9,7 +9,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Gdk", "4.0")
 from gi.repository import Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
-from workstation_agent import PLAN_MODEL, PlanError, plan_prompt, run_plan  # noqa: E402
+from workstation_agent import PLAN_MODEL, PlanError, jira_mine, plan_prompt, repo_with_branch, run_plan  # noqa: E402
 
 from workstation_store import (DAY_NAMES, INBOX, JIRA_BROWSE, MONTH_NAMES, PROJECTS_DIR, TASKS_FILE,  # noqa: E402
                                TaskStore, claude_prompt, due_of, jira_key, list_repos, short_date)
@@ -504,11 +504,15 @@ class TasksView(Gtk.Paned):
         self.nav.connect("row-selected", self.on_nav_selected)
         scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True)
         scroller.set_child(self.nav)
+        self.jira_button = Gtk.Button(label="⬇  My Jira cards", css_classes=["flat", "sync-button"],
+                                      tooltip_text="Bring the Jira cards assigned to you as tasks")
+        self.jira_button.connect("clicked", lambda _b: self.import_jira())
         self.sync_button = Gtk.Button(label="⟳  Sync with Todoist", css_classes=["flat", "sync-button"])
         self.sync_button.connect("clicked", lambda _b: self.start_sync())
         self.update_sync_tooltip()
         sidebar = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, css_classes=["sidebar"], width_request=200)
         sidebar.append(scroller)
+        sidebar.append(self.jira_button)
         sidebar.append(self.sync_button)
         return sidebar
 
@@ -1093,6 +1097,48 @@ class TasksView(Gtk.Paned):
         self.store.move_to_section(task, anchor.get("section"), before)
         GLib.idle_add(lambda: (self.reload(), False)[1])
         return True
+
+    def import_jira(self):
+        self.jira_button.set_label("Fetching…")
+        self.jira_button.set_sensitive(False)
+
+        def fetch():
+            try:
+                cards, error = jira_mine(), None
+            except PlanError as exc:
+                cards, error = [], str(exc)
+            GLib.idle_add(self.add_jira_cards, cards, error)
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def add_jira_cards(self, cards, error):
+        self.jira_button.set_sensitive(True)
+        known = {jira_key(t) for t in self.store.tasks}
+        project = self.view[1] if self.view[0] == "project" else INBOX
+        added = []
+        for key, status, summary in cards:
+            if key not in known:
+                task = self.store.add_task(f"{key} {summary}", f"Jira: {status}", project=project)
+                added.append(task)
+        self.jira_button.set_label("⚠  Jira failed" if error else f"⬇  My Jira cards (+{len(added)})")
+        self.jira_button.set_tooltip_text(error or f"{len(cards)} open cards assigned to you; {len(added)} new")
+        self.reload()
+        if added:
+            threading.Thread(target=self.suggest_repos, args=(added,), daemon=True).start()
+        return False
+
+    def suggest_repos(self, tasks):
+        found = {t["id"]: repo_with_branch(jira_key(t)) for t in tasks}
+        GLib.idle_add(self.apply_suggested_repos, found)
+
+    def apply_suggested_repos(self, found):
+        for task_id, repo in found.items():
+            task = self.store.find_task(task_id)
+            if task and repo and not task.get("repo"):
+                task["repo"] = repo
+        self.store.save()
+        self.reload()
+        return False
 
     def plan_button(self, task):
         busy = task["id"] in self.planning

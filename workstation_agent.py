@@ -3,7 +3,7 @@ import os
 import shutil
 import subprocess
 
-from workstation_store import claude_prompt, jira_key
+from workstation_store import claude_prompt, jira_key, list_repos
 
 JIRA_SCRIPT = os.path.expanduser("~/.claude/skills/jira-daily-report/scripts/jira.sh")
 CLAUDE_FALLBACKS = ["~/.local/bin/claude", "~/.claude/local/claude", "~/.npm-global/bin/claude"]
@@ -41,6 +41,37 @@ def jira_text(key):
     except (OSError, subprocess.TimeoutExpired):
         return ""
     return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def jira_mine():
+    if not os.access(JIRA_SCRIPT, os.X_OK):
+        raise PlanError(f"Jira script not found: {JIRA_SCRIPT}")
+    try:
+        result = subprocess.run([JIRA_SCRIPT, "mine"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise PlanError(f"Could not reach Jira: {error}") from error
+    if result.returncode != 0:
+        raise PlanError((result.stderr or result.stdout).strip()[:300] or "jira.sh mine failed")
+    cards = []
+    for line in result.stdout.splitlines():
+        parts = [p.strip() for p in line.split(" | ", 2)]
+        if len(parts) == 3:
+            cards.append(tuple(parts))
+    return cards
+
+
+def repo_with_branch(key):
+    """First local repo with a local or remote branch containing the Jira key; costs no tokens."""
+    needle = key.lower()
+    for path in list_repos():
+        try:
+            result = subprocess.run(["git", "-C", path, "for-each-ref", "--format=%(refname:short)",
+                                     "refs/heads", "refs/remotes"], capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if needle in result.stdout.lower():
+            return path
+    return None
 
 
 def plan_prompt(store, task):
