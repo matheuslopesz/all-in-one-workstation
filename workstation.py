@@ -25,6 +25,7 @@ gi.require_version("Graphene", "1.0")
 from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk, Pango  # noqa: E402
 
 from workstation_agents import AGENTS_CSS, AgentsView  # noqa: E402
+from workstation_claude import CLAUDE_CSS, ClaudeView  # noqa: E402
 from workstation_notes import NOTES_CSS, NotesView  # noqa: E402
 from workstation_tasks import TASKS_CSS, TasksView  # noqa: E402
 from workstation_retro import BLACK, PINK, RETRO_CSS, SILVER_LO, BootScreen, Scanlines  # noqa: E402
@@ -436,7 +437,7 @@ class OptionsWindow(Gtk.Window):
         toggle("PC anos 2000: retro click sounds?", "retro_sounds")
 
         title("Tabs")
-        for name, label in (("tasks", "Tasks"), ("notes", "Notes"), ("agents", "Agents")):
+        for name, label in (("tasks", "Tasks"), ("notes", "Notes"), ("agents", "Agents"), ("claude", "Claude")):
             check = Gtk.CheckButton(label=f"Show {label} tab?", active=name not in self.store["hidden_tabs"])
             check.connect("toggled", lambda b, n=name: self.show_tab(n, b.get_active()))
             grid.attach(check, 0, row, 2, 1)
@@ -564,6 +565,9 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.agents = AgentsView(self.tasks)
         self.stack.add_titled(self.agents, "agents", "Agents")
         self.tasks.show_run = self.show_run
+        self.claude = ClaudeView()
+        self.stack.add_titled(self.claude, "claude", "Claude")
+        self.tasks.send_to_claude = self.send_to_claude
         self.connect("close-request", self.on_close)
 
         self.header_tabs = Gtk.StackSwitcher(stack=self.stack)
@@ -612,11 +616,18 @@ class WorkstationWindow(Gtk.ApplicationWindow):
     def apply_theme(self):
         retro = self.is_retro()
         self.get_application().load_theme(self.store["theme"], self.store["font_scale"])
+        self.claude.set_font_scale(self.store["font_scale"] / 100)
         for widget in (self.retro_icon, self.retro_title, self.tabstrip, self.statusbar, self.scanlines):
             widget.set_visible(retro)
         self.header_tabs.set_visible(not retro)
         self.goal_bar.set_retro(retro)
         self.week_chart.set_retro(retro)
+
+    def send_to_claude(self, folder, prompt, title):
+        if "claude" in self.store["hidden_tabs"] or not self.claude.send_task(folder, prompt, title):
+            return False
+        self.stack.set_visible_child_name("claude")
+        return True
 
     def show_run(self, run_id):
         if "agents" not in self.store["hidden_tabs"]:
@@ -624,7 +635,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.agents.select_run(run_id)
 
     def apply_tabs(self):
-        for name in ("tasks", "notes", "agents"):
+        for name in ("tasks", "notes", "agents", "claude"):
             self.stack.get_page(self.stack.get_child_by_name(name)).set_visible(
                 name not in self.store["hidden_tabs"])
 
@@ -1004,7 +1015,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         if self.boot:
             self.boot.finish()
             return True
-        tabs = {Gdk.KEY_1: "timer", Gdk.KEY_2: "tasks", Gdk.KEY_3: "notes", Gdk.KEY_4: "agents"}
+        tabs = {Gdk.KEY_1: "timer", Gdk.KEY_2: "tasks", Gdk.KEY_3: "notes", Gdk.KEY_4: "agents", Gdk.KEY_5: "claude"}
         if state & Gdk.ModifierType.ALT_MASK and keyval in tabs:
             if tabs[keyval] not in self.store["hidden_tabs"]:
                 self.stack.set_visible_child_name(tabs[keyval])
@@ -1044,7 +1055,7 @@ class WorkstationApp(Gtk.Application):
 
     def load_theme(self, name, font_scale=100):
         _label, theme_css = THEMES.get(name, THEMES["dracula"])
-        css = CSS + TASKS_CSS + NOTES_CSS + AGENTS_CSS + theme_css
+        css = CSS + TASKS_CSS + NOTES_CSS + AGENTS_CSS + CLAUDE_CSS + theme_css
         if font_scale != 100:
             css = re.sub(r"font-size: (\d+)px", lambda m: f"font-size: {round(int(m[1]) * font_scale / 100)}px", css)
             base = Pango.FontDescription.from_string(Gtk.Settings.get_default().props.gtk_font_name)

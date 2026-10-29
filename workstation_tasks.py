@@ -390,6 +390,10 @@ class TaskDialog(Gtk.Window):
         if self.view.store.is_root(self.task) and self.view.store.repo(self.task):
             head.append(self.view.plan_button(self.task))
             head.append(self.view.run_button(self.task))
+            send = Gtk.Button(label="💬 Claude tab", css_classes=["flat", "plan-button"],
+                              tooltip_text="Open a Claude session in the task's repo, starting from the plan")
+            send.connect("clicked", lambda _b: self.view.open_in_claude(self.task) and self.close())
+            head.append(send)
         head.append(self.view.claude_button(self.task))
         self.subtasks.append(head)
         for child in children:
@@ -544,6 +548,7 @@ class TasksView(Gtk.Paned):
         self.branch_repos = {}
         self.run_status = {}
         self.show_run = None
+        self.send_to_claude = None
         self.syncing = False
         self.disk_timer = 0
         self.monitor = Gio.File.new_for_path(os.path.dirname(TASKS_FILE)).monitor_directory(
@@ -1160,6 +1165,12 @@ class TasksView(Gtk.Paned):
         self.store.move_to_section(task, anchor.get("section"), before)
         GLib.idle_add(lambda: (self.reload(), False)[1])
         return True
+
+    def open_in_claude(self, task):
+        paths = self.store.repo_paths(task)
+        if not self.send_to_claude or not paths:
+            return False
+        return self.send_to_claude(paths[0], claude_prompt(self.store, task), task["title"])
 
     def run_button(self, task):
         run = self.run_status.get(task["id"])
