@@ -71,6 +71,7 @@ row:hover .task-actions {{ opacity: 1; }}
 .month-label {{ font-weight: bold; }}
 .board-column {{ background: alpha(currentColor, 0.04); border-radius: 10px; padding: 8px; }}
 .board-column.drop-hover {{ background: alpha({ACCENT}, 0.12); }}
+.sidebar row.drop-hover {{ background: alpha({ACCENT}, 0.25); }}
 .column-name {{ font-weight: bold; }}
 .board-card {{ border: 1px solid alpha(currentColor, 0.12); border-radius: 8px; padding: 8px;
               background: alpha(currentColor, 0.03); }}
@@ -452,6 +453,23 @@ class RepoDialog(Gtk.Window):
         self.set_child(box)
 
 
+class MoveDialog(Gtk.Window):
+    def __init__(self, parent, title, projects, on_pick):
+        super().__init__(title=title, transient_for=parent, modal=True, default_width=300, resizable=False)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4, margin_top=16, margin_bottom=16,
+                      margin_start=16, margin_end=16)
+        for project in projects:
+            label = Gtk.Label(xalign=0)
+            label.set_markup(f'<span foreground="{project["color"]}">●</span>  {GLib.markup_escape_text(project["name"])}')
+            button = Gtk.Button(child=label, css_classes=["flat"])
+            button.connect("clicked", lambda _b, p=project: (on_pick(p), self.close()))
+            box.append(button)
+        cancel = Gtk.Button(label="Cancel", halign=Gtk.Align.END, margin_top=8)
+        cancel.connect("clicked", lambda _b: self.close())
+        box.append(cancel)
+        self.set_child(box)
+
+
 class NameDialog(Gtk.Window):
     def __init__(self, parent, title, initial, on_submit, placeholder="Project name"):
         super().__init__(title=title, transient_for=parent, modal=True, default_width=360, resizable=False)
@@ -664,6 +682,10 @@ class TasksView(Gtk.Paned):
             self.nav.append(self.nav_row(("project", project["id"]), dot, self.project_menu(project)))
 
         for row in self.iter_rows(self.nav):
+            if getattr(row, "view", (None,))[0] == "project":
+                self.add_project_drop(row)
+
+        for row in self.iter_rows(self.nav):
             if getattr(row, "view", None) == self.view:
                 self.nav.select_row(row)
 
@@ -680,6 +702,25 @@ class TasksView(Gtk.Paned):
         row.view = view
         return row
 
+    def add_project_drop(self, row):
+        target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
+        target.connect("enter", lambda *_: (row.add_css_class("drop-hover"), Gdk.DragAction.MOVE)[1])
+        target.connect("leave", lambda *_: row.remove_css_class("drop-hover"))
+        target.connect("drop", self.on_project_drop, row.view[1])
+        row.add_controller(target)
+
+    def on_project_drop(self, target, task_id, _x, _y, project_id):
+        target.get_widget().remove_css_class("drop-hover")
+        task = self.store.find_task(task_id)
+        if not task:
+            return False
+        self.store.move_to_project(task, project_id)
+        GLib.idle_add(lambda: (self.reload(), False)[1])
+        return True
+
+    def other_projects(self, project_id):
+        return [p for p in self.store.projects if p["id"] != project_id]
+
     def project_menu(self, project):
         return self.item_menu(
             lambda: NameDialog(self.get_root(), "Rename project", project["name"],
@@ -695,7 +736,10 @@ class TasksView(Gtk.Paned):
             lambda: NameDialog(self.get_root(), "Rename section", section["name"],
                                lambda name: (self.store.rename_section(section, name), self.reload()),
                                "Section name").present(),
-            lambda: (self.store.delete_section(project, section), self.reload()))
+            lambda: (self.store.delete_section(project, section), self.reload()),
+            ("Move to…", lambda: MoveDialog(
+                self.get_root(), f"Move “{section['name']}” to", self.other_projects(project["id"]),
+                lambda target: (self.store.move_section(section, project, target), self.reload())).present()))
 
     def item_menu(self, on_rename, on_delete, *extra):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -1059,11 +1103,18 @@ class TasksView(Gtk.Paned):
         spot = Gdk.Rectangle()
         spot.x, spot.y, spot.width, spot.height = int(x), int(y), 1, 1
         button = Gtk.Button(label="Unmark urgent" if task["priority"] else "🔥 Mark as urgent", css_classes=["flat"])
-        popover = Gtk.Popover(child=button, has_arrow=False, pointing_to=spot)
+        move = Gtk.Button(label="📁 Move to…", css_classes=["flat"])
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(button)
+        box.append(move)
+        popover = Gtk.Popover(child=box, has_arrow=False, pointing_to=spot)
         popover.set_parent(widget)
         popover.connect("closed", lambda p: GLib.idle_add(lambda: (p.unparent(), False)[1]))
         button.connect("clicked", lambda _b: (popover.popdown(), self.store.set_priority(task, not task["priority"]),
                                               GLib.idle_add(lambda: (self.reload(), False)[1])))
+        move.connect("clicked", lambda _b: (popover.popdown(), MoveDialog(
+            self.get_root(), f"Move “{task['title']}” to", self.other_projects(task["project"]),
+            lambda target: (self.store.move_to_project(task, target["id"]), self.reload())).present()))
         popover.popup()
 
     def list_drop_spot(self, y):

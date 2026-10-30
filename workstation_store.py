@@ -269,12 +269,9 @@ class TaskStore:
         return task
 
     def update_task(self, task, title, description, due, priority, project, repo=None):
-        if project != task["project"]:
-            task.update(section=None, parent=None)
-            for child in self.descendants(task):
-                child["project"] = project
+        self.place_in_project(task, project)
         task.update(title=title, description=description, due=due.isoformat() if due else None,
-                    priority=priority, project=project)
+                    priority=priority)
         if repo:
             task["repo"] = repo
         else:
@@ -358,6 +355,32 @@ class TaskStore:
         if before is not task:
             self.tasks.remove(task)
             self.tasks.insert(self.tasks.index(before) if before else len(self.tasks), task)
+        self.save()
+
+    def place_in_project(self, task, project_id, section_id=None):
+        """Move a task and its sub-tasks to another project; a sub-task moved alone becomes a root task."""
+        if project_id == task["project"]:
+            return
+        task.update(project=project_id, section=section_id, parent=None)
+        for child in self.descendants(task):
+            child["project"] = project_id
+
+    def move_to_project(self, task, project_id):
+        self.place_in_project(task, project_id)
+        self.save()
+
+    def move_section(self, section, source, target):
+        """Move a section and its tasks to another project."""
+        if source is target:
+            return
+        # Todoist sections can't change project: the old one is deleted after its tasks move to a fresh one.
+        self.forget_remote("sections", section)
+        section.pop("todoist_id", None)
+        section.pop("synced_name", None)
+        self.sections(source).remove(section)
+        self.sections(target).append(section)
+        for task in [t for t in self.tasks if t.get("section") == section["id"] and t["project"] == source["id"]]:
+            self.place_in_project(task, target["id"], section["id"])
         self.save()
 
     def set_layout(self, project, layout):
