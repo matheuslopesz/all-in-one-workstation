@@ -339,6 +339,14 @@ class TaskStore:
                 t["section"] = None
         self.save()
 
+    def reorder_section(self, project, section, anchor, after):
+        sections = self.sections(project)
+        if section is anchor or section not in sections:
+            return
+        sections.remove(section)
+        sections.insert(sections.index(anchor) + after, section)
+        self.save()
+
     def adopt_loose_tasks(self, project):
         sections = self.sections(project)
         known = {s["id"] for s in sections}

@@ -76,6 +76,8 @@ row:hover .task-actions {{ opacity: 1; }}
 .board-card {{ border: 1px solid alpha(currentColor, 0.12); border-radius: 8px; padding: 8px;
               background: alpha(currentColor, 0.03); }}
 .board-card:hover {{ border-color: alpha(currentColor, 0.3); }}
+.board-column.drop-left {{ box-shadow: inset 4px 0 0 0 {ACCENT}; }}
+.board-column.drop-right {{ box-shadow: inset -4px 0 0 0 {ACCENT}; }}
 .board-card.drop-before {{ box-shadow: 0 -5px 0 -2px {ACCENT}; }}
 .board-card.drop-after {{ box-shadow: 0 5px 0 -2px {ACCENT}; }}
 .subtasks-head {{ font-weight: bold; font-size: 13px; }}
@@ -512,6 +514,7 @@ class TasksView(Gtk.Paned):
         self.monitor.connect("changed", self.on_disk_event)
         self.view = ("project", INBOX)
         self.show_done = False
+        self.dragging_section = None
         self.cal_month = date.today().replace(day=1)
         self.set_start_child(self.build_sidebar())
         self.set_end_child(self.build_content())
@@ -823,6 +826,12 @@ class TasksView(Gtk.Paned):
         head.append(Gtk.Label(label=str(count) if count else "", xalign=0, hexpand=True, css_classes=["count"]))
         if section:
             head.append(self.section_menu(project, section))
+            drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
+            drag.connect("prepare", lambda *_: Gdk.ContentProvider.new_for_value(f"section:{section_id}"))
+            drag.connect("drag-begin", lambda source, _d: (setattr(self, "dragging_section", section),
+                                                           source.set_icon(Gtk.WidgetPaintable.new(column), 0, 0)))
+            drag.connect("drag-end", lambda *_: setattr(self, "dragging_section", None))
+            head.add_controller(drag)
         column.append(head)
         cards = []
         for task in tasks:
@@ -836,8 +845,9 @@ class TasksView(Gtk.Paned):
         target = Gtk.DropTarget.new(GObject.TYPE_STRING, Gdk.DragAction.MOVE)
         target.connect("enter", lambda *_: (column.add_css_class("drop-hover"), Gdk.DragAction.MOVE)[1])
         target.connect("motion", self.on_board_motion, cards)
-        target.connect("leave", lambda *_: (column.remove_css_class("drop-hover"), self.mark_drop_slot(cards, None)))
-        target.connect("drop", self.on_board_drop, section_id, cards)
+        target.connect("leave", lambda *_: (column.remove_css_class("drop-hover"), self.mark_drop_slot(cards, None),
+                                            self.mark_column_side(column, None)))
+        target.connect("drop", self.on_board_drop, project, section, cards)
         column.add_controller(target)
         return column
 
@@ -858,9 +868,19 @@ class TasksView(Gtk.Paned):
             elif slot == len(cards) and index == slot - 1:
                 card.add_css_class("drop-after")
 
-    def on_board_motion(self, target, _x, y, cards):
-        self.mark_drop_slot(cards, self.drop_slot(target.get_widget(), cards, y))
+    def on_board_motion(self, target, x, y, cards):
+        column = target.get_widget()
+        if self.dragging_section:
+            self.mark_column_side(column, x > column.get_width() / 2)
+        else:
+            self.mark_drop_slot(cards, self.drop_slot(column, cards, y))
         return Gdk.DragAction.MOVE
+
+    def mark_column_side(self, column, after):
+        column.remove_css_class("drop-left")
+        column.remove_css_class("drop-right")
+        if after is not None:
+            column.add_css_class("drop-right" if after else "drop-left")
 
     def board_card(self, task):
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4,
@@ -917,16 +937,24 @@ class TasksView(Gtk.Paned):
             card.append(row)
             self.append_card_subtasks(card, child, depth + 1)
 
-    def on_board_drop(self, target, task_id, _x, y, section_id, cards):
+    def on_board_drop(self, target, value, x, y, project, section, cards):
         column = target.get_widget()
         column.remove_css_class("drop-hover")
-        task = self.store.find_task(task_id)
+        self.mark_column_side(column, None)
+        if value.startswith("section:"):
+            dragged = next((s for s in self.store.sections(project) if f"section:{s['id']}" == value), None)
+            if not dragged or not section:
+                return False
+            self.store.reorder_section(project, dragged, section, x > column.get_width() / 2)
+            GLib.idle_add(lambda: (self.reload(), False)[1])
+            return True
+        task = self.store.find_task(value)
         if not task:
             return False
         slot = self.drop_slot(column, cards, y)
         self.mark_drop_slot(cards, None)
         before = cards[slot][1] if slot < len(cards) else None
-        self.store.move_to_section(task, section_id, before)
+        self.store.move_to_section(task, section and section["id"], before)
         GLib.idle_add(lambda: (self.reload(), False)[1])
         return True
 
