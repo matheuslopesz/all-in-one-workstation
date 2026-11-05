@@ -26,6 +26,7 @@ Começou como um clone do tomato-timer.com e foi crescendo.
 - **Tasks + Claude**: cada task pode ter um repo (ou herdar o do projeto) e o ticket do Jira é detectado no título ou na descrição. O 🤖 copia o plano com os ids, e o Claude dá notícias pela CLI (`all-in-one-workstation task show|done|note|add <id>`); o app recarrega sozinho. O botão **✨ Plan** pede a um agente Sonnet só leitura uma sugestão de sub-tasks
 - **Todoist**: o botão **⟳ Sync with Todoist** sincroniza projetos, seções e tasks nos dois sentidos (Urgent = P1)
 - **Passwords** (Alt+4): cofre local cifrado (scrypt + AES-GCM) em `~/.config/all-in-one-workstation/vault.json`, destravado por uma senha mestra que não tem recuperação. Importa o CSV exportado do LastPass, busca, copia usuário e senha (o clipboard limpa em 30s), gera senhas e trava sozinho depois de 5 min parado
+- **Finances** (Alt+5): importa fatura do Nubank (CSV), extrato da conta Nubank (CSV) e fatura do Itaú (PDF); separa gastos por categoria (aprende quando você corrige), mostra parcelas futuras e dívidas fixas, e o plano que o Claude monta (`all-in-one-workstation finance summary|import|plan`), comparando o real com a meta de cada mês
 - **Barra superior**: extensão do GNOME Shell que mostra `⏰ MM:SS` com a cor do modo atual. Clicar nela abre o app
 
 ## Atalhos

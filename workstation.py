@@ -15,6 +15,9 @@ from datetime import date, datetime, timedelta
 if __name__ == "__main__" and sys.argv[1:2] == ["task"]:
     from workstation_store import cli
     sys.exit(cli(sys.argv[2:]))
+if __name__ == "__main__" and sys.argv[1:2] == ["finance"]:
+    from workstation_finance import cli
+    sys.exit(cli(sys.argv[2:]))
 
 import gi  # noqa: E402
 
@@ -24,6 +27,7 @@ gi.require_version("Gsk", "4.0")
 gi.require_version("Graphene", "1.0")
 from gi.repository import Gdk, GLib, GObject, Graphene, Gsk, Gtk, Pango  # noqa: E402
 
+from workstation_finances import FINANCES_CSS, FinancesView  # noqa: E402
 from workstation_notes import NOTES_CSS, NotesView  # noqa: E402
 from workstation_passwords import PASSWORDS_CSS, PasswordsView  # noqa: E402
 from workstation_tasks import TASKS_CSS, TasksView  # noqa: E402
@@ -436,7 +440,7 @@ class OptionsWindow(Gtk.Window):
         toggle("PC anos 2000: retro click sounds?", "retro_sounds")
 
         title("Tabs")
-        for name, label in (("tasks", "Tasks"), ("notes", "Notes"), ("passwords", "Passwords")):
+        for name, label in (("tasks", "Tasks"), ("notes", "Notes"), ("passwords", "Passwords"), ("finances", "Finances")):
             check = Gtk.CheckButton(label=f"Show {label} tab?", active=name not in self.store["hidden_tabs"])
             check.connect("toggled", lambda b, n=name: self.show_tab(n, b.get_active()))
             grid.attach(check, 0, row, 2, 1)
@@ -563,6 +567,8 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.stack.add_titled(self.notes, "notes", "📝  Notes")
         self.passwords = PasswordsView()
         self.stack.add_titled(self.passwords, "passwords", "🔑  Passwords")
+        self.finances = FinancesView()
+        self.stack.add_titled(self.finances, "finances", "💰  Finances")
         self.connect("close-request", self.on_close)
 
         self.header_tabs = Gtk.StackSwitcher(stack=self.stack)
@@ -585,7 +591,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         root.append(self.build_log())
         root.append(Gtk.Label(
             label="SPACE  Start / Stop     ALT+P  Pomodoro     ALT+S  Short Break     "
-                  "ALT+L  Long Break     ALT+R  Reset     ALT+1/2/3/4  Tabs",
+                  "ALT+L  Long Break     ALT+R  Reset     ALT+1…5  Tabs",
             css_classes=["hint"], wrap=True, justify=Gtk.Justification.CENTER))
 
         keys = Gtk.EventControllerKey(propagation_phase=Gtk.PropagationPhase.CAPTURE)
@@ -618,7 +624,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         self.week_chart.set_retro(retro)
 
     def apply_tabs(self):
-        for name in ("tasks", "notes", "passwords"):
+        for name in ("tasks", "notes", "passwords", "finances"):
             self.stack.get_page(self.stack.get_child_by_name(name)).set_visible(
                 name not in self.store["hidden_tabs"])
 
@@ -997,7 +1003,7 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         if self.boot:
             self.boot.finish()
             return True
-        tabs = {Gdk.KEY_1: "timer", Gdk.KEY_2: "tasks", Gdk.KEY_3: "notes", Gdk.KEY_4: "passwords"}
+        tabs = {Gdk.KEY_1: "timer", Gdk.KEY_2: "tasks", Gdk.KEY_3: "notes", Gdk.KEY_4: "passwords", Gdk.KEY_5: "finances"}
         if state & Gdk.ModifierType.ALT_MASK and keyval in tabs:
             if tabs[keyval] not in self.store["hidden_tabs"]:
                 self.stack.set_visible_child_name(tabs[keyval])
@@ -1037,7 +1043,7 @@ class WorkstationApp(Gtk.Application):
 
     def load_theme(self, name, font_scale=100):
         _label, theme_css = THEMES.get(name, THEMES["dracula"])
-        css = CSS + TASKS_CSS + NOTES_CSS + PASSWORDS_CSS + theme_css
+        css = CSS + TASKS_CSS + NOTES_CSS + PASSWORDS_CSS + FINANCES_CSS + theme_css
         if font_scale != 100:
             css = re.sub(r"font-size: (\d+)px", lambda m: f"font-size: {round(int(m[1]) * font_scale / 100)}px", css)
             base = Pango.FontDescription.from_string(Gtk.Settings.get_default().props.gtk_font_name)
