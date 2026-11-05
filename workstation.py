@@ -555,11 +555,11 @@ class WorkstationWindow(Gtk.ApplicationWindow):
         scroller.set_child(root)
 
         self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, hexpand=True, vexpand=True)
-        self.stack.add_titled(scroller, "timer", "Timer")
+        self.stack.add_titled(scroller, "timer", "⏱  Timer")
         self.tasks = TasksView(self.focus_on_task)
-        self.stack.add_titled(self.tasks, "tasks", "Tasks")
+        self.stack.add_titled(self.tasks, "tasks", "✅  Tasks")
         self.notes = NotesView()
-        self.stack.add_titled(self.notes, "notes", "Notes")
+        self.stack.add_titled(self.notes, "notes", "📝  Notes")
         self.connect("close-request", self.on_close)
 
         self.header_tabs = Gtk.StackSwitcher(stack=self.stack)
