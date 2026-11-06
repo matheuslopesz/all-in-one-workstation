@@ -607,6 +607,14 @@ class NotesView(Gtk.Paned):
                                       tooltip_text="Copy the original HTML, with its formatting, to paste anywhere")
         self.copy_button.connect("clicked", self.copy_html)
         head.append(self.copy_button)
+        self.copy_raw_button = Gtk.Button(label="Copy", css_classes=["flat"], valign=Gtk.Align.CENTER,
+                                          visible=False, tooltip_text="Copy the raw Markdown")
+        self.copy_raw_button.connect("clicked", self.copy_raw)
+        head.append(self.copy_raw_button)
+        self.raw_toggle = Gtk.ToggleButton(label="</> Raw", css_classes=["flat"], valign=Gtk.Align.CENTER,
+                                           tooltip_text="Show the raw Markdown")
+        self.raw_toggle.connect("toggled", lambda _b: self.show_raw())
+        head.append(self.raw_toggle)
         head.append(self.note_menu())
         box.append(head)
         self.claude_banner = Gtk.Label(label="🤖 Written by Claude · read-only", xalign=0,
@@ -633,7 +641,14 @@ class NotesView(Gtk.Paned):
         self.body.add_controller(keys)
         body_scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, hexpand=True)
         body_scroller.set_child(self.body)
-        box.append(body_scroller)
+        self.raw = Gtk.TextView(editable=False, monospace=True, wrap_mode=Gtk.WrapMode.WORD_CHAR,
+                                css_classes=["note-body"])
+        raw_scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER, vexpand=True, hexpand=True)
+        raw_scroller.set_child(self.raw)
+        self.body_pages = Gtk.Stack()
+        self.body_pages.add_named(body_scroller, "rich")
+        self.body_pages.add_named(raw_scroller, "raw")
+        box.append(self.body_pages)
         self.pages.add_named(box, "editor")
         return self.pages
 
@@ -747,6 +762,24 @@ class NotesView(Gtk.Paned):
         button.set_label("Copied ✓")
         GLib.timeout_add(1500, lambda: (button.set_label("Copy all"), False)[1])
 
+    def raw_text(self):
+        text = self.store.read(self.current)
+        return html_to_markdown(text) if self.store.is_html(self.current) else text
+
+    def show_raw(self):
+        raw = self.raw_toggle.get_active() and self.current is not None
+        if raw:
+            self.flush()
+            self.raw.get_buffer().set_text(self.raw_text())
+        self.body_pages.set_visible_child_name("raw" if raw else "rich")
+        self.copy_raw_button.set_visible(raw)
+        self.toolbar.set_visible(not raw and self.current is not None and not self.store.is_read_only(self.current))
+
+    def copy_raw(self, button):
+        self.get_clipboard().set(self.raw_text())
+        button.set_label("Copied ✓")
+        GLib.timeout_add(1500, lambda: (button.set_label("Copy"), False)[1])
+
     def open_note(self, title):
         self.flush()
         self.current = title
@@ -767,6 +800,7 @@ class NotesView(Gtk.Paned):
         self.loaded_text = self.store.read(title)
         text = html_to_markdown(self.loaded_text) if is_html else self.loaded_text
         self.load(readable_markdown(text) if read_only else text, rich_tables=read_only)
+        self.show_raw()
         self.pages.set_visible_child_name("editor")
         self.rebuild_list()
 
