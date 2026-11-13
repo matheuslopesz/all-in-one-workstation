@@ -1,14 +1,41 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <!-- Dracula palette: #282a36 bg, #bd93f9 purple, #ff79c6 pink, #8be9fd cyan, #f8f8f2 fg -->
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2f3142"/>
+      <stop offset="1" stop-color="#1e1f29"/>
+    </linearGradient>
+    <radialGradient id="aura" cx="64" cy="64" r="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#bd93f9" stop-opacity="0.55"/>
+      <stop offset="0.45" stop-color="#ff79c6" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#bd93f9" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="spark" x1="30" y1="26" x2="98" y2="102" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff79c6"/>
+      <stop offset="0.5" stop-color="#bd93f9"/>
+      <stop offset="1" stop-color="#8be9fd"/>
+    </linearGradient>
+    <radialGradient id="core" cx="64" cy="64" r="14" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f8f8f2"/>
+      <stop offset="1" stop-color="#f8f8f2" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
   <!-- tile -->
-  <rect x="4" y="4" width="120" height="120" rx="28" fill="#1f1e1d"/>
-  <rect x="4.5" y="4.5" width="119" height="119" rx="27.5" fill="none" stroke="#ffffff" stroke-opacity="0.08"/>
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#tile)"/>
+  <rect x="4.5" y="4.5" width="119" height="119" rx="27.5" fill="none" stroke="#bd93f9" stroke-opacity="0.18"/>
 
-  <!-- timer: track, elapsed arc and the slice still to go -->
-  <circle cx="64" cy="68" r="34" fill="none" stroke="#3a3836" stroke-width="10"/>
-  <path d="M64 34 A34 34 0 1 1 30 68" fill="none" stroke="#d97757" stroke-width="10" stroke-linecap="round"/>
-  <path d="M64 68 L42 68 A22 22 0 0 1 64 46 Z" fill="#f0eee6"/>
-  <circle cx="64" cy="68" r="4.5" fill="#f0eee6"/>
+  <!-- soft aura and a faint orbit -->
+  <circle cx="64" cy="64" r="56" fill="url(#aura)"/>
+  <ellipse cx="64" cy="64" rx="44" ry="16" fill="none" stroke="#8be9fd" stroke-opacity="0.35" stroke-width="1.5" transform="rotate(-24 64 64)"/>
 
-  <!-- crown -->
-  <rect x="57" y="16" width="14" height="8" rx="4" fill="#d97757"/>
+  <!-- four-point sparkle with a glowing core -->
+  <path d="M64 24 C67 53 75 61 104 64 C75 67 67 75 64 104 C61 75 53 67 24 64 C53 61 61 53 64 24 Z" fill="url(#spark)"/>
+  <circle cx="64" cy="64" r="14" fill="url(#core)"/>
+
+  <!-- distant stars -->
+  <path d="M95 30 C95.6 34 96 34.4 100 35 C96 35.6 95.6 36 95 40 C94.4 36 94 35.6 90 35 C94 34.4 94.4 34 95 30 Z" fill="#f8f8f2" fill-opacity="0.9"/>
+  <circle cx="33" cy="94" r="2" fill="#ff79c6" fill-opacity="0.8"/>
+  <circle cx="30" cy="34" r="1.4" fill="#8be9fd" fill-opacity="0.7"/>
+  <circle cx="99" cy="92" r="1.2" fill="#f8f8f2" fill-opacity="0.6"/>
 </svg>
